@@ -1,0 +1,6 @@
+[requires]
+dbcppp/3.2.6
+
+[generators]
+CMakeDeps
+CMakeToolchain
