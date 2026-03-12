@@ -8,4 +8,5 @@ class CaneoConan(ConanFile):
     generators = "CMakeToolchain", "CMakeDeps"
 
     def requirements(self):
-        self.requires("boost/1.86.0")
+        self.requires("boost/1.80.0")
+        self.requires("dbcppp/3.2.6")

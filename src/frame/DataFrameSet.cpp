@@ -27,6 +27,9 @@ std::ostream& operator<<(std::ostream& os, const DataFrameSet& set) {
         for (auto byte : frame.payload()) {
             os << " " << std::bitset<8>(byte);
         }
+        for (const auto& sig : frame.decoded()) {
+            os << "\n    " << sig.name << ": " << sig.value << " " << sig.unit;
+        }
         os << "\n";
     }
     return os;

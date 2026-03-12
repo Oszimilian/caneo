@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Boost REQUIRED COMPONENTS system)
+find_package(dbcppp REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -14,7 +15,9 @@ add_executable(caneo
     src/frame/DataFrameSet.cpp
     src/socket/Socket.cpp
     src/socket/SocketCAN.cpp
+    src/decoder/DbcPppWrapper.cpp
+    src/decoder/DecoderRegistry.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp)
