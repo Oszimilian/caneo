@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(dbcppp REQUIRED)
+find_package(ftxui REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -17,7 +19,9 @@ add_executable(caneo
     src/socket/SocketCAN.cpp
     src/decoder/DbcPppWrapper.cpp
     src/decoder/DecoderRegistry.cpp
+    src/gui/TuiDataFrameSet.cpp
+    src/config/Config.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp)

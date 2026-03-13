@@ -3,7 +3,8 @@
 #include <bitset>
 
 DataFrame::DataFrame(std::vector<uint8_t> payload)
-    : payload_(std::move(payload)) {}
+    : payload_(std::move(payload))
+    , timestamp_(std::chrono::steady_clock::now()) {}
 
 const std::vector<uint8_t>& DataFrame::payload() const {
     return payload_;
@@ -11,6 +12,10 @@ const std::vector<uint8_t>& DataFrame::payload() const {
 
 const std::vector<DecodedSignal>& DataFrame::decoded() const {
     return decoded_;
+}
+
+std::chrono::steady_clock::time_point DataFrame::timestamp() const {
+    return timestamp_;
 }
 
 void DataFrame::addDecoded(DecodedSignal signal) {

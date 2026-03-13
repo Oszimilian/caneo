@@ -1,0 +1,3 @@
+interfaces:
+  vcan0: dbc/vcan0.dbc
+  vcan1: dbc/vcan0.dbc

@@ -88,5 +88,56 @@ classDiagram
     DataFrameSet o-- CanFrame
     CanFrame *-- CanHeader
     DataFrame *-- DecodedSignal
+    class InterfaceConfig {
+        <<struct>>
+        +name : string
+        +dbc : string
+    }
+
+    class GuiDataFrameSet {
+        <<abstract>>
+        +update(frame: CanFrame)* void
+        +run()* void
+    }
+
+    class TuiDataFrameSet {
+        -sets_ : map~string, DataFrameSet~
+        -mutex_ : mutex
+        -selected_tab_ : size_t
+        -screen_ : ScreenInteractive
+        +update(frame: CanFrame) void
+        +run() void
+        -render() Element
+    }
+
     Socket ..> DataFrame : callback
+    GuiDataFrameSet <|-- TuiDataFrameSet
+    TuiDataFrameSet o-- DataFrameSet
+```
+
+## Configuration
+
+`caneo.yaml` (or any file passed via `--config`) is parsed by `Config.cpp` using yaml-cpp.
+
+```yaml
+interfaces:
+  <interface-name>: <path-to-dbc>   # dbc is optional
+```
+
+`InterfaceConfig` holds the parsed result (name + optional dbc path).
+
+## Startup flow
+
+```
+main()
+ ├─ parse CLI args (--tui, --config, interface:dbc …)
+ ├─ load_config() / try_load_default_config()   →  vector<InterfaceConfig>
+ ├─ for each InterfaceConfig:
+ │   ├─ DecoderRegistry::add_interface(name, dbc)
+ │   └─ SocketCAN::start()  →  async reads  →  onFrame callback
+ │       └─ DecoderRegistry::decode(CanFrame)
+ │           └─ [tui mode]  TuiDataFrameSet::update(CanFrame)
+ │              [cli mode]  DataFrameSet::update(CanFrame)  +  println
+ └─ [tui mode]  TuiDataFrameSet::run()  (blocking, FTXUI event loop)
+    [cli mode]  io_context::run()       (blocking)
 ```

@@ -7,7 +7,11 @@ DataFrameSet::DataFrameSet(std::string interface)
     : interface_(std::move(interface)) {}
 
 void DataFrameSet::update(const CanFrame& frame) {
-    frames_.insert_or_assign(frame.header().id, frame);
+    const uint32_t id = frame.header().id;
+    if (const auto it = frames_.find(id); it != frames_.end()) {
+        deltas_[id] = frame.timestamp() - it->second.timestamp();
+    }
+    frames_.insert_or_assign(id, frame);
 }
 
 const std::string& DataFrameSet::interface() const {
@@ -16,6 +20,16 @@ const std::string& DataFrameSet::interface() const {
 
 std::size_t DataFrameSet::size() const {
     return frames_.size();
+}
+
+const std::map<uint32_t, CanFrame>& DataFrameSet::frames() const {
+    return frames_;
+}
+
+std::optional<std::chrono::steady_clock::duration> DataFrameSet::delta(uint32_t id) const {
+    if (const auto it = deltas_.find(id); it != deltas_.end())
+        return it->second;
+    return std::nullopt;
 }
 
 std::ostream& operator<<(std::ostream& os, const DataFrameSet& set) {

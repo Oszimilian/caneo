@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <format>
 #include <ostream>
@@ -22,11 +23,14 @@ public:
     const std::vector<DecodedSignal>& decoded() const;
     void addDecoded(DecodedSignal signal);
 
+    std::chrono::steady_clock::time_point timestamp() const;
+
     friend std::ostream& operator<<(std::ostream& os, const DataFrame& frame);
 
 protected:
     std::vector<uint8_t> payload_;
     std::vector<DecodedSignal> decoded_;
+    std::chrono::steady_clock::time_point timestamp_;
 };
 
 template <>

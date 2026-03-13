@@ -10,3 +10,5 @@ class CaneoConan(ConanFile):
     def requirements(self):
         self.requires("boost/1.80.0")
         self.requires("dbcppp/3.2.6")
+        self.requires("ftxui/6.1.9")
+        self.requires("yaml-cpp/0.8.0")
