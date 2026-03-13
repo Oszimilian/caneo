@@ -31,6 +31,7 @@ private:
     ftxui::Element render_msg_list(const SendModel& model) const;
     ftxui::Element render_sig_list(const SendModel& model) const;
     ftxui::Element render_actions() const;
+    ftxui::Element render_action_signals(const ActionInfo& info) const;
 
     // Helpers
     const std::string& selected_send_iface() const;
@@ -55,11 +56,16 @@ private:
     int  sub_tab_send_    = 0;
     int  send_msg_cursor_ = 0;
     int  send_sig_cursor_ = 0;
-    int  actions_cursor_  = 0;
+    int  actions_cursor_    = 0;
+    int  actions_sig_cursor_ = 0; // cursor in signal edit view (Actions tab)
 
-    // Signal value editing
+    // Signal value editing (Send tab)
     bool        send_editing_      = false;
     std::string send_edit_buf_;
+
+    // Signal value editing (Actions tab)
+    bool        actions_editing_    = false;
+    std::string actions_edit_buf_;
 
     // Period input (for PeriodicAction creation)
     bool        send_period_editing_ = false;

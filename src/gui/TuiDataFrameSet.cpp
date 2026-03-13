@@ -99,6 +99,59 @@ void TuiDataFrameSet::run() {
 
     renderer |= CatchEvent([this](Event event) -> bool {
 
+        // ── Actions signal edit ───────────────────────────────────────────
+        if (actions_editing_) {
+            if (event == Event::Return || event == Event::ArrowLeft) {
+                // commit value into SendModel, then re-encode + update action payload
+                const auto snap = action_handler_.snapshot();
+                if (actions_cursor_ < static_cast<int>(snap.size()) && !actions_edit_buf_.empty()) {
+                    const ActionInfo& info = snap[actions_cursor_];
+                    auto it = send_models_.find(info.interface);
+                    if (it != send_models_.end()) {
+                        SendModel& model = *it->second;
+                        const auto& msgs = model.messages();
+                        // find message by id
+                        for (int mi = 0; mi < static_cast<int>(msgs.size()); ++mi) {
+                            if (msgs[mi].id == info.msg_id) {
+                                const int sig_count = static_cast<int>(msgs[mi].signals.size());
+                                const int sig_idx   = std::min(actions_sig_cursor_, sig_count - 1);
+                                if (sig_idx >= 0) {
+                                    try {
+                                        model.set_value(static_cast<std::size_t>(mi),
+                                                        static_cast<std::size_t>(sig_idx),
+                                                        std::stod(actions_edit_buf_));
+                                        action_handler_.update_payload(
+                                            static_cast<std::size_t>(actions_cursor_),
+                                            model.encode(static_cast<std::size_t>(mi)));
+                                    } catch (...) {}
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                actions_editing_ = false;
+                actions_edit_buf_.clear();
+                return true;
+            }
+            if (event == Event::Escape) {
+                actions_editing_ = false;
+                actions_edit_buf_.clear();
+                return true;
+            }
+            if (event == Event::Backspace) {
+                if (!actions_edit_buf_.empty()) actions_edit_buf_.pop_back();
+                return true;
+            }
+            if (event.is_character()) {
+                const char c = event.character()[0];
+                if (std::isdigit(static_cast<unsigned char>(c)) || c == '.' || c == '-')
+                    actions_edit_buf_ += c;
+                return true;
+            }
+            return false;
+        }
+
         // ── Period input ──────────────────────────────────────────────────
         if (send_period_editing_) {
             if (event == Event::Return || event == Event::ArrowLeft || event == Event::ArrowRight) {
@@ -234,8 +287,61 @@ void TuiDataFrameSet::run() {
             return false;
         }
 
-        // ── Message list (nav_level_ == 2) ────────────────────────────────
+        // ── nav_level_ == 2: message list (Send) or action signal view (Actions) ──
         if (nav_level_ == 2) {
+            if (main_tab_ == 2) {
+                // Actions tab: signal edit view
+                if (event == Event::ArrowLeft) {
+                    nav_level_ = 1;
+                    return true;
+                }
+                if (event == Event::ArrowRight) {
+                    // Enter signal edit mode
+                    const auto snap = action_handler_.snapshot();
+                    if (actions_cursor_ < static_cast<int>(snap.size())) {
+                        const ActionInfo& info = snap[actions_cursor_];
+                        auto it = send_models_.find(info.interface);
+                        if (it != send_models_.end()) {
+                            const auto& msgs = it->second->messages();
+                            for (const auto& msg : msgs) {
+                                if (msg.id == info.msg_id && !msg.signals.empty()) {
+                                    const auto& sig = msg.signals[std::min(
+                                        actions_sig_cursor_,
+                                        static_cast<int>(msg.signals.size()) - 1)];
+                                    actions_edit_buf_ = std::format("{:.6g}", sig.value);
+                                    actions_editing_  = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                if (event == Event::ArrowUp) {
+                    if (actions_sig_cursor_ > 0) --actions_sig_cursor_;
+                    return true;
+                }
+                if (event == Event::ArrowDown) {
+                    const auto snap = action_handler_.snapshot();
+                    if (actions_cursor_ < static_cast<int>(snap.size())) {
+                        const ActionInfo& info = snap[actions_cursor_];
+                        auto it = send_models_.find(info.interface);
+                        if (it != send_models_.end()) {
+                            for (const auto& msg : it->second->messages()) {
+                                if (msg.id == info.msg_id) {
+                                    const int max = static_cast<int>(msg.signals.size()) - 1;
+                                    if (actions_sig_cursor_ < max) ++actions_sig_cursor_;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            // Send tab: message list
             if (event == Event::ArrowLeft) {
                 nav_level_ = 1;
                 return true;
@@ -278,6 +384,14 @@ void TuiDataFrameSet::run() {
                     const auto snap = action_handler_.snapshot();
                     if (actions_cursor_ + 1 < static_cast<int>(snap.size()))
                         ++actions_cursor_;
+                    return true;
+                }
+                if (event == Event::ArrowRight) {
+                    const auto snap = action_handler_.snapshot();
+                    if (actions_cursor_ < static_cast<int>(snap.size())) {
+                        actions_sig_cursor_ = 0;
+                        nav_level_          = 2;
+                    }
                     return true;
                 }
                 if (event == Event::Delete || event == Event::Backspace) {
@@ -529,10 +643,79 @@ Element TuiDataFrameSet::render_send() const {
     return vbox({sub_tabs, separator(), content});
 }
 
+// ─── Action signal edit view ───────────────────────────────────────────────
+
+Element TuiDataFrameSet::render_action_signals(const ActionInfo& info) const {
+    auto it = send_models_.find(info.interface);
+    if (it == send_models_.end())
+        return text("Kein SendModel für dieses Interface.") | dim | center;
+
+    const SendModel& model = *it->second;
+    const auto& msgs = model.messages();
+
+    // find message by id
+    const SendMessage* msg_ptr = nullptr;
+    int msg_idx = -1;
+    for (int i = 0; i < static_cast<int>(msgs.size()); ++i) {
+        if (msgs[i].id == info.msg_id) { msg_ptr = &msgs[i]; msg_idx = i; break; }
+    }
+    if (!msg_ptr || msg_idx < 0)
+        return text("Message nicht in DBC gefunden.") | dim | center;
+
+    const SendMessage& msg = *msg_ptr;
+    Element header = text(std::format("◀ [{}] 0x{:03X}  {}  ({})",
+                                      info.interface, msg.id, msg.name,
+                                      info.is_periodic
+                                          ? std::format("{}ms", info.period.count())
+                                          : std::string("Single"))) | bold;
+
+    Elements sig_rows;
+    for (int i = 0; i < static_cast<int>(msg.signals.size()); ++i) {
+        const SendSignal& sig    = msg.signals[i];
+        const bool        is_cur = (i == actions_sig_cursor_);
+        const bool        editing = is_cur && actions_editing_;
+
+        Element val_elem;
+        if (editing)
+            val_elem = hbox(text("["), text(actions_edit_buf_), text("_]")) | inverted;
+        else
+            val_elem = text(std::format("{:.6g}", sig.value));
+
+        Element row = hbox(
+            text(is_cur ? "▶ " : "  "),
+            text(sig.name + ": ") | (is_cur ? bold : nothing),
+            val_elem,
+            text(" " + sig.unit) | dim);
+
+        if (is_cur && !editing && nav_level_ == 2) row = row | inverted;
+        if (is_cur)                                  row = row | focus;
+        sig_rows.push_back(std::move(row));
+    }
+    if (sig_rows.empty())
+        sig_rows.push_back(text("(keine Signale)") | dim);
+
+    const std::vector<uint8_t> raw = model.encode(static_cast<std::size_t>(msg_idx));
+    std::string hex_str;
+    for (const uint8_t b : raw) hex_str += std::format("{:02X} ", b);
+    if (!hex_str.empty()) hex_str.pop_back();
+
+    return vbox({
+        header,
+        separator(),
+        vbox(std::move(sig_rows)) | vscroll_indicator | frame,
+        separator(),
+        hbox(text("Raw: ") | dim, text(hex_str) | bold),
+    });
+}
+
 // ─── Actions ───────────────────────────────────────────────────────────────
 
 Element TuiDataFrameSet::render_actions() const {
     const auto snap = action_handler_.snapshot();
+
+    // Signal edit view for a specific action
+    if (nav_level_ == 2 && actions_cursor_ < static_cast<int>(snap.size()))
+        return render_action_signals(snap[actions_cursor_]);
 
     if (snap.empty()) {
         return vbox({
@@ -585,7 +768,8 @@ Element TuiDataFrameSet::render_actions() const {
         separator(),
         vbox(std::move(rows)) | vscroll_indicator | frame,
         separator(),
-        text("[Del] Action löschen") | dim,
+        hbox(text("[→]") | bold, text(" Signale bearbeiten  "),
+             text("[Del]") | bold, text(" Action löschen")) | dim,
     });
 }
 

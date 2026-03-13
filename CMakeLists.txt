@@ -9,6 +9,7 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(dbcppp REQUIRED)
 find_package(ftxui REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(protobuf REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -25,7 +26,9 @@ add_executable(caneo
     src/send/SendModel.cpp
     src/action/Action.cpp
     src/action/ActionHandler.cpp
+    src/proto/ProtoLog.cpp
+    src/proto/ProtoLogRegistry.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf)

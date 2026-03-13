@@ -32,6 +32,13 @@ std::vector<ActionInfo> ActionHandler::snapshot() const {
     return snapshot_;
 }
 
+void ActionHandler::update_payload(std::size_t idx, std::vector<uint8_t> payload) {
+    boost::asio::post(io_, [this, idx, p = std::move(payload)]() mutable {
+        if (idx < actions_.size())
+            actions_[idx]->set_payload(std::move(p));
+    });
+}
+
 void ActionHandler::on_action_done(Action* ptr) {
     // already on asio thread
     std::erase_if(actions_, [ptr](const auto& a) { return a.get() == ptr; });

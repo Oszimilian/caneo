@@ -28,6 +28,7 @@ public:
     // Thread-safe: callable from any thread
     void add_action(std::unique_ptr<Action> action);
     void remove_action(std::size_t idx);
+    void update_payload(std::size_t idx, std::vector<uint8_t> payload);
 
     // Accessors for constructing Action objects
     boost::asio::io_context& io_ref()      { return io_; }

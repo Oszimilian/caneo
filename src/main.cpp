@@ -5,6 +5,7 @@
 #include "frame/CanFrame.hpp"
 #include "frame/DataFrameSet.hpp"
 #include "gui/TuiDataFrameSet.hpp"
+#include "proto/ProtoLogRegistry.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
 
@@ -20,14 +21,9 @@
 #include <vector>
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::println(stderr, "Usage: caneo [--tui] [--config <file>] [<interface>[:<dbc>] ...]");
-        std::println(stderr, "Example: caneo --tui vcan0:vcan0.dbc vcan1");
-        std::println(stderr, "         caneo --tui --config caneo.yaml");
-        return 1;
-    }
 
     bool tui_mode = false;
+    bool log_mode = false;
     std::string config_path;
     std::vector<std::string_view> iface_args;
 
@@ -36,6 +32,8 @@ int main(int argc, char* argv[]) {
         const std::string_view arg = args[i];
         if (arg == "--tui") {
             tui_mode = true;
+        } else if (arg == "--log") {
+            log_mode = true;
         } else if (arg == "--config") {
             if (i + 1 >= args.size()) {
                 std::println(stderr, "Error: --config requires a file path.");
@@ -127,17 +125,21 @@ int main(int argc, char* argv[]) {
 
     } else {
         std::vector<DataFrameSet> sets;
+        ProtoLogRegistry proto_registry;
 
         for (const auto& cfg : iface_configs) {
             sets.emplace_back(cfg.name);
-            if (!cfg.dbc.empty())
+            if (!cfg.dbc.empty()) {
                 decoders.add_interface(cfg.name, cfg.dbc);
+                proto_registry.add_interface(cfg.name, cfg.dbc);
+            }
         }
 
         for (std::size_t i = 0; i < sets.size(); ++i) {
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, sets[i].interface()));
-            socket->onFrame([&sets, &decoders, i](std::unique_ptr<DataFrame> frame) {
-                if (auto* canFrame = dynamic_cast<CanFrame*>(frame.get())) {
+            socket->onFrame([&sets, &decoders, &proto_registry, &log_mode, i](std::unique_ptr<DataFrame> frame) {
+                auto* canFrame = dynamic_cast<CanFrame*>(frame.get());
+                if (canFrame) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}
                     sets[i].update(*canFrame);
                 }
@@ -145,6 +147,11 @@ int main(int argc, char* argv[]) {
                     std::println("{}", set);
                 }
                 std::println("--------------------------------------------------");
+                if (!log_mode && canFrame) {
+                    const std::string description = proto_registry.describe(*canFrame);
+                    if (!description.empty())
+                        std::println("proto:\n{}", description);
+                }
             });
             socket->start();
             std::println("Listening on {}...", *socket);

@@ -32,6 +32,7 @@ public:
 
     void start(std::function<void()> on_fired, std::function<void()> on_done);
     void cancel();
+    void set_payload(std::vector<uint8_t> payload) { payload_ = std::move(payload); }
 
 protected:
     void fire();
