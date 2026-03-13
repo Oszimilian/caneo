@@ -179,6 +179,42 @@ classDiagram
         +ever_sent : bool
     }
 
+    class ProtoLog {
+        -interface_ : string
+        -pool_ : DescriptorPool
+        -factory_ : DynamicMessageFactory
+        -descriptors_ : unordered_map~uint64_t, Descriptor*~
+        -field_names_ : unordered_map~uint64_t, map~string,string~~
+        +ProtoLog(interface, dbc_path)
+        +descriptor(msg_id) Descriptor*
+        +serialize(frame) string
+        +describe(frame) string
+        -build_message(frame) unique_ptr~Message~
+    }
+
+    class ProtoLogRegistry {
+        -logs_ : unordered_map~string, unique_ptr~ProtoLog~~
+        +add_interface(interface, dbc_path) void
+        +serialize(frame) string
+        +describe(frame) string
+        +get(interface) ProtoLog*
+    }
+
+    class Logger {
+        <<abstract>>
+        +log(frame, descriptor, serialized)* void
+    }
+
+    class McapLogger {
+        -writer_ : McapWriter
+        -channels_ : unordered_map~string, ChannelId~
+        -schemas_ : unordered_map~string, SchemaId~
+        +McapLogger(path)
+        +log(frame, descriptor, serialized) void
+        -get_or_register_schema(descriptor) SchemaId
+        -get_or_register_channel(topic, schema_id) ChannelId
+    }
+
     class GuiDataFrameSet {
         <<abstract>>
         +update(frame: CanFrame)* void
@@ -216,6 +252,8 @@ classDiagram
     Action <|-- PeriodicAction
     ActionHandler o-- Action
     ActionHandler ..> ActionInfo : produces
+    ProtoLogRegistry o-- ProtoLog
+    Logger <|-- McapLogger
     GuiDataFrameSet <|-- TuiDataFrameSet
     TuiDataFrameSet o-- DataFrameSet
     TuiDataFrameSet o-- SendModel
@@ -256,7 +294,7 @@ interfaces:
 
 ```
 main()
- ├─ parse CLI args (--tui, --config, interface:dbc …)
+ ├─ parse CLI args (--tui, --log, --debug, --config, interface:dbc …)
  ├─ load_config() / try_load_default_config()  →  Config
  ├─ setup_interfaces(config)
  ├─ [tui mode]
@@ -264,20 +302,39 @@ main()
  │   ├─ SendFn  →  looks up socket by interface name, calls SocketCAN::send()
  │   ├─ ActionHandler(io, send_fn)
  │   ├─ TuiDataFrameSet(iface_configs, action_handler)
+ │   ├─ ProtoLogRegistry  (built if --log)
+ │   ├─ McapLogger(timestamped_file)  (created if --log)
  │   ├─ for each InterfaceConfig:
  │   │   ├─ DecoderRegistry::add_interface(name, dbc)
  │   │   ├─ SocketCAN::start()  →  async reads  →  onFrame callback
- │   │   │   └─ DecoderRegistry::decode(CanFrame)
- │   │   │       └─ TuiDataFrameSet::update(CanFrame)
+ │   │   │   ├─ DecoderRegistry::decode(CanFrame)
+ │   │   │   ├─ TuiDataFrameSet::update(CanFrame)
+ │   │   │   └─ [if --log] ProtoLogRegistry::serialize() → McapLogger::log()
  │   │   └─ socket_map[name] = socket.get()
  │   ├─ asio_thread: io_context::run()   (handles reads + action timers)
- │   └─ TuiDataFrameSet::run()           (blocking, ftxui event loop)
+ │   ├─ TuiDataFrameSet::run()           (blocking, ftxui event loop)
+ │   └─ logger.reset()                  (flush & close MCAP on quit)
  └─ [cli mode]
+     ├─ ProtoLogRegistry  (always built)
+     ├─ McapLogger(timestamped_file)  (created if --log)
+     ├─ signal_set(SIGINT, SIGTERM)  →  logger.reset() + io.stop()
      ├─ for each InterfaceConfig:
      │   ├─ DecoderRegistry::add_interface(name, dbc)
-     │   └─ SocketCAN::start()  →  DataFrameSet::update()  +  println
-     └─ io_context::run()  (blocking)
+     │   └─ SocketCAN::start()  →  onFrame callback
+     │       ├─ [if --debug] DataFrameSet::update() + println
+     │       ├─ [if --log]   ProtoLogRegistry::serialize() → McapLogger::log()
+     │       └─ [else]       ProtoLogRegistry::describe() + println
+     └─ io_context::run()  (blocking, until SIGINT/SIGTERM)
 ```
+
+## CLI flags
+
+| Flag | Effect |
+|------|--------|
+| `--tui` | Start interactive terminal UI |
+| `--log` | Write decoded frames to a timestamped MCAP file (`caneo_YYYYMMDD_HHMMSS.mcap`) |
+| `--debug` | Print frame data to stdout (CLI mode only, without `--tui`) |
+| `--config <file>` | Load interface configuration from YAML file |
 
 ## Threading model
 
@@ -289,6 +346,19 @@ main()
 - `TuiDataFrameSet::sets_` — guarded by `mutex_`; written by asio thread, read by ftxui thread
 - `ActionHandler::actions_` — only accessed on asio thread (no mutex needed)
 - `ActionHandler::snapshot_` — guarded by `snapshot_mutex_`; written by asio thread, read by ftxui thread
+
+## Protobuf / MCAP logging
+
+One `ProtoLog` per interface. At construction it reads the DBC and dynamically builds
+proto2 `FileDescriptorProto` descriptors — one proto message type per CAN message,
+all signals as `optional double` fields.
+
+`VECTOR__INDEPENDENT_SIG_MSG` is always excluded.
+
+`McapLogger` writes Foxglove-compatible MCAP files:
+- Schema: `FileDescriptorSet` serialized bytes, one schema per message type, keyed by fully-qualified type name
+- Channel topic: `<interface>/<message_name>` (e.g. `vcan0/SS_ELMO_TARGET`)
+- Schemas and channels are registered lazily on first message
 
 ## TUI navigation
 
