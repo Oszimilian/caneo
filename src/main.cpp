@@ -4,6 +4,7 @@
 #include "frame/CanFrame.hpp"
 #include "frame/DataFrameSet.hpp"
 #include "gui/TuiDataFrameSet.hpp"
+#include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
 
 #include <boost/asio.hpp>
@@ -44,24 +45,24 @@ int main(int argc, char* argv[]) {
     }
 
     // Resolve interface configs
-    std::vector<InterfaceConfig> iface_configs;
+    Config config;
     try {
         if (!config_path.empty()) {
-            iface_configs = load_config(config_path);
+            config = load_config(config_path);
         } else if (iface_args.empty()) {
             // No interfaces given — try caneo.yaml in cwd
             if (auto cfg = try_load_default_config()) {
-                iface_configs = std::move(*cfg);
+                config = std::move(*cfg);
             }
         } else {
             // Explicit interface args — parse them directly, skip caneo.yaml
             for (const std::string_view arg : iface_args) {
                 const auto sep = arg.find(':');
-                InterfaceConfig cfg;
-                cfg.name = std::string(arg.substr(0, sep));
+                InterfaceConfig iface;
+                iface.name = std::string(arg.substr(0, sep));
                 if (sep != std::string_view::npos)
-                    cfg.dbc = std::string(arg.substr(sep + 1));
-                iface_configs.push_back(std::move(cfg));
+                    iface.dbc = std::string(arg.substr(sep + 1));
+                config.interfaces.push_back(std::move(iface));
             }
         }
     } catch (const std::exception& e) {
@@ -69,10 +70,19 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (iface_configs.empty()) {
+    if (config.interfaces.empty()) {
         std::println(stderr, "Error: no interfaces specified and no caneo.yaml found.");
         return 1;
     }
+
+    try {
+        setup_interfaces(config);
+    } catch (const std::exception& e) {
+        std::println(stderr, "Error setting up interfaces: {}", e.what());
+        return 1;
+    }
+
+    const auto& iface_configs = config.interfaces;
 
     boost::asio::io_context io;
     DecoderRegistry decoders;

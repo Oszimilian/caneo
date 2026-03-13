@@ -21,6 +21,7 @@ add_executable(caneo
     src/decoder/DecoderRegistry.cpp
     src/gui/TuiDataFrameSet.cpp
     src/config/Config.cpp
+    src/setup/InterfaceSetup.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
