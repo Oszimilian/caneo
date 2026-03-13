@@ -22,6 +22,9 @@ add_executable(caneo
     src/gui/TuiDataFrameSet.cpp
     src/config/Config.cpp
     src/setup/InterfaceSetup.cpp
+    src/send/SendModel.cpp
+    src/action/Action.cpp
+    src/action/ActionHandler.cpp
 )
 
 target_include_directories(caneo PRIVATE src)

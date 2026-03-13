@@ -36,6 +36,13 @@ SocketCAN::SocketCAN(boost::asio::io_context& io, std::string interface)
         throw std::runtime_error("Failed to bind CAN socket to: " + interface_);
     }
 
+    // Echo own transmitted frames back so they appear in the trace view
+    int recv_own = 1;
+    if (::setsockopt(fd, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS, &recv_own, sizeof(recv_own)) < 0) {
+        ::close(fd);
+        throw std::runtime_error("Failed to set CAN_RAW_RECV_OWN_MSGS on: " + interface_);
+    }
+
     descriptor_.assign(fd);
 }
 
@@ -81,6 +88,14 @@ void SocketCAN::asyncRead() {
 
             asyncRead();
         });
+}
+
+void SocketCAN::send(uint64_t id, const std::vector<uint8_t>& data) {
+    struct can_frame frame{};
+    frame.can_id  = static_cast<canid_t>(id & CAN_EFF_MASK);
+    frame.can_dlc = static_cast<uint8_t>(std::min(data.size(), std::size_t{8}));
+    std::copy_n(data.begin(), frame.can_dlc, frame.data);
+    boost::asio::write(descriptor_, boost::asio::buffer(&frame, sizeof(frame)));
 }
 
 std::ostream& operator<<(std::ostream& os, const SocketCAN& socket) {

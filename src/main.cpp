@@ -1,3 +1,4 @@
+#include "action/ActionHandler.hpp"
 #include "compat/print.hpp"
 #include "config/Config.hpp"
 #include "decoder/DecoderRegistry.hpp"
@@ -6,6 +7,8 @@
 #include "gui/TuiDataFrameSet.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
+
+#include <map>
 
 #include <boost/asio.hpp>
 #include <memory>
@@ -89,12 +92,25 @@ int main(int argc, char* argv[]) {
     std::vector<std::unique_ptr<SocketCAN>> sockets;
 
     if (tui_mode) {
-        auto tui = std::make_shared<TuiDataFrameSet>();
+        // Build a socket map so the send function can look up sockets by interface name.
+        // The map is populated before io.run() starts, so it's safe to read from the asio thread.
+        std::map<std::string, SocketCAN*> socket_map;
+
+        SendFn send_fn = [&socket_map](const std::string& iface, uint64_t id,
+                                       const std::vector<uint8_t>& data) {
+            auto it = socket_map.find(iface);
+            if (it != socket_map.end())
+                it->second->send(id, data);
+        };
+
+        ActionHandler action_handler(io, send_fn);
+        auto tui = std::make_shared<TuiDataFrameSet>(iface_configs, action_handler);
 
         for (const auto& cfg : iface_configs) {
             if (!cfg.dbc.empty())
                 decoders.add_interface(cfg.name, cfg.dbc);
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, cfg.name));
+            socket_map[cfg.name] = socket.get();
             socket->onFrame([tui, &decoders](std::unique_ptr<DataFrame> frame) {
                 if (auto* canFrame = dynamic_cast<CanFrame*>(frame.get())) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}

@@ -18,6 +18,7 @@ public:
     void stop() override;
 
     const std::string& interface() const;
+    void send(uint64_t id, const std::vector<uint8_t>& data);
 
     friend std::ostream& operator<<(std::ostream& os, const SocketCAN& socket);
 
