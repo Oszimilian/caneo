@@ -13,3 +13,4 @@ class CaneoConan(ConanFile):
         self.requires("ftxui/6.1.9")
         self.requires("yaml-cpp/0.8.0")
         self.requires("protobuf/3.21.12")
+        self.requires("mcap/2.1.1")

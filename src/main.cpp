@@ -5,6 +5,8 @@
 #include "frame/CanFrame.hpp"
 #include "frame/DataFrameSet.hpp"
 #include "gui/TuiDataFrameSet.hpp"
+#include "logger/McapLogger.hpp"
+#include "logger/Logger.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
@@ -12,6 +14,9 @@
 #include <map>
 
 #include <boost/asio.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <chrono>
+#include <ctime>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -24,6 +29,7 @@ int main(int argc, char* argv[]) {
 
     bool tui_mode = false;
     bool log_mode = false;
+    bool debug_mode = false;
     std::string config_path;
     std::vector<std::string_view> iface_args;
 
@@ -34,6 +40,8 @@ int main(int argc, char* argv[]) {
             tui_mode = true;
         } else if (arg == "--log") {
             log_mode = true;
+        } else if (arg == "--debug") {
+            debug_mode = true;
         } else if (arg == "--config") {
             if (i + 1 >= args.size()) {
                 std::println(stderr, "Error: --config requires a file path.");
@@ -104,15 +112,37 @@ int main(int argc, char* argv[]) {
         ActionHandler action_handler(io, send_fn);
         auto tui = std::make_shared<TuiDataFrameSet>(iface_configs, action_handler);
 
+        ProtoLogRegistry proto_registry;
+        std::unique_ptr<Logger> logger;
+        if (log_mode) {
+            for (const auto& cfg : iface_configs)
+                if (!cfg.dbc.empty())
+                    proto_registry.add_interface(cfg.name, cfg.dbc);
+
+            const auto now = std::chrono::system_clock::now();
+            const std::time_t t = std::chrono::system_clock::to_time_t(now);
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
+            logger = std::make_unique<McapLogger>(buf);
+        }
+
         for (const auto& cfg : iface_configs) {
             if (!cfg.dbc.empty())
                 decoders.add_interface(cfg.name, cfg.dbc);
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, cfg.name));
             socket_map[cfg.name] = socket.get();
-            socket->onFrame([tui, &decoders](std::unique_ptr<DataFrame> frame) {
+            socket->onFrame([tui, &decoders, &proto_registry, &logger](std::unique_ptr<DataFrame> frame) {
                 if (auto* canFrame = dynamic_cast<CanFrame*>(frame.get())) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}
                     tui->update(*canFrame);
+                    if (logger) {
+                        const std::string serialized = proto_registry.serialize(*canFrame);
+                        const auto* proto_log = proto_registry.get(canFrame->header().interface);
+                        const auto* desc = proto_log
+                            ? proto_log->descriptor(canFrame->header().id)
+                            : nullptr;
+                        logger->log(*canFrame, desc, serialized);
+                    }
                 }
             });
             socket->start();
@@ -122,6 +152,7 @@ int main(int argc, char* argv[]) {
         tui->run();
         io.stop();
         asio_thread.join();
+        logger.reset(); // flush & close MCAP before returning
 
     } else {
         std::vector<DataFrameSet> sets;
@@ -135,27 +166,54 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Build logger (only when --log)
+        std::unique_ptr<Logger> logger;
+        if (log_mode) {
+            const auto now = std::chrono::system_clock::now();
+            const std::time_t t = std::chrono::system_clock::to_time_t(now);
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
+            logger = std::make_unique<McapLogger>(buf);
+        }
+
         for (std::size_t i = 0; i < sets.size(); ++i) {
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, sets[i].interface()));
-            socket->onFrame([&sets, &decoders, &proto_registry, &log_mode, i](std::unique_ptr<DataFrame> frame) {
+            socket->onFrame([&sets, &decoders, &proto_registry, &logger, &debug_mode, i](std::unique_ptr<DataFrame> frame) {
                 auto* canFrame = dynamic_cast<CanFrame*>(frame.get());
                 if (canFrame) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}
                     sets[i].update(*canFrame);
                 }
-                for (const auto& set : sets) {
-                    std::println("{}", set);
+                if (debug_mode) {
+                    for (const auto& set : sets) {
+                        std::println("{}", set);
+                    }
+                    std::println("--------------------------------------------------");
                 }
-                std::println("--------------------------------------------------");
-                if (!log_mode && canFrame) {
-                    const std::string description = proto_registry.describe(*canFrame);
-                    if (!description.empty())
-                        std::println("proto:\n{}", description);
+                if (canFrame) {
+                    if (logger) {
+                        const std::string serialized = proto_registry.serialize(*canFrame);
+                        const auto* proto_log = proto_registry.get(canFrame->header().interface);
+                        const auto* desc = proto_log
+                            ? proto_log->descriptor(canFrame->header().id)
+                            : nullptr;
+                        logger->log(*canFrame, desc, serialized);
+                    } else if (debug_mode) {
+                        const std::string description = proto_registry.describe(*canFrame);
+                        if (!description.empty())
+                            std::println("proto:\n{}", description);
+                    }
                 }
             });
             socket->start();
             std::println("Listening on {}...", *socket);
         }
+
+        boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+        signals.async_wait([&io, &logger](const boost::system::error_code&, int) {
+            logger.reset(); // close & flush MCAP while still on the io thread
+            io.stop();
+        });
 
         io.run();
     }

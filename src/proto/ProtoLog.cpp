@@ -37,7 +37,7 @@ ProtoLog::ProtoLog(std::string interface, const std::string& dbc_path)
     // Build one FileDescriptorProto containing all CAN messages as proto types
     google::protobuf::FileDescriptorProto file_proto;
     file_proto.set_name(interface_ + ".proto");
-    file_proto.set_syntax("proto3");
+    file_proto.set_syntax("proto2");
 
     for (const dbcppp::IMessage& msg : network->Messages()) {
         if (msg.Name() == "VECTOR__INDEPENDENT_SIG_MSG")

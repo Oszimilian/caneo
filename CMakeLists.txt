@@ -10,6 +10,7 @@ find_package(dbcppp REQUIRED)
 find_package(ftxui REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(protobuf REQUIRED)
+find_package(mcap REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -28,7 +29,8 @@ add_executable(caneo
     src/action/ActionHandler.cpp
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
+    src/logger/McapLogger.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf mcap::mcap)
