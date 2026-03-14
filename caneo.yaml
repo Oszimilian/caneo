@@ -1,4 +1,4 @@
-virtual: true
+virtual: false
 interfaces:
   can0: 
     dbc: dbc/vcan0.dbc
