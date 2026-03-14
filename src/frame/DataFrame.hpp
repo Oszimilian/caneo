@@ -23,6 +23,9 @@ public:
     const std::vector<DecodedSignal>& decoded() const;
     void addDecoded(DecodedSignal signal);
 
+    const std::string& msg_name() const;
+    void set_msg_name(std::string name);
+
     std::chrono::steady_clock::time_point timestamp() const;
 
     friend std::ostream& operator<<(std::ostream& os, const DataFrame& frame);
@@ -30,6 +33,7 @@ public:
 protected:
     std::vector<uint8_t> payload_;
     std::vector<DecodedSignal> decoded_;
+    std::string msg_name_;
     std::chrono::steady_clock::time_point timestamp_;
 };
 

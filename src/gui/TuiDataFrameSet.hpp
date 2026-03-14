@@ -71,6 +71,10 @@ private:
     bool        send_period_editing_ = false;
     std::string send_period_buf_;
 
+    // ── Trace search (ftxui thread only) ─────────────────────────────────
+    bool        trace_searching_   = false;
+    std::string trace_search_buf_;
+
     // ── Trace data (guarded by mutex_) ────────────────────────────────────
     mutable std::mutex                  mutex_;
     std::map<std::string, DataFrameSet> sets_;

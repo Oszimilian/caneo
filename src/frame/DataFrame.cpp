@@ -22,6 +22,14 @@ void DataFrame::addDecoded(DecodedSignal signal) {
     decoded_.push_back(std::move(signal));
 }
 
+const std::string& DataFrame::msg_name() const {
+    return msg_name_;
+}
+
+void DataFrame::set_msg_name(std::string name) {
+    msg_name_ = std::move(name);
+}
+
 std::ostream& operator<<(std::ostream& os, const DataFrame& frame) {
     os << "DataFrame:\n";
     os << "  Payload [" << frame.payload_.size() << "]:";

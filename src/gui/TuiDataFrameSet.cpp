@@ -10,6 +10,25 @@
 
 using namespace ftxui;
 
+// ─── Trace search helper ───────────────────────────────────────────────────
+
+static bool trace_matches(uint32_t id, const CanFrame& frame, const std::string& query) {
+    auto ci_contains = [](const std::string& hay, const std::string& needle) {
+        return std::search(hay.begin(), hay.end(), needle.begin(), needle.end(),
+                           [](char a, char b) {
+                               return std::tolower(static_cast<unsigned char>(a))
+                                   == std::tolower(static_cast<unsigned char>(b));
+                           }) != hay.end();
+    };
+    if (ci_contains(std::format("0x{:03X}", id), query)) return true;
+    if (ci_contains(frame.msg_name(), query)) return true;
+    for (const auto& sig : frame.decoded()) {
+        if (ci_contains(sig.name,  query)) return true;
+        if (ci_contains(sig.unit,  query)) return true;
+    }
+    return false;
+}
+
 // ─── Construction ──────────────────────────────────────────────────────────
 
 TuiDataFrameSet::TuiDataFrameSet(const std::vector<InterfaceConfig>& iface_configs,
@@ -225,6 +244,24 @@ void TuiDataFrameSet::run() {
             return false;
         }
 
+        // ── Trace search input ────────────────────────────────────────────
+        if (trace_searching_) {
+            if (event == Event::Escape) {
+                trace_searching_ = false;
+                trace_search_buf_.clear();
+                return true;
+            }
+            if (event == Event::Backspace) {
+                if (!trace_search_buf_.empty()) trace_search_buf_.pop_back();
+                return true;
+            }
+            if (event.is_character()) {
+                trace_search_buf_ += event.character();
+                return true;
+            }
+            return false;
+        }
+
         // ── Quit ──────────────────────────────────────────────────────────
         if (event == Event::Character('q') || event == Event::Escape) {
             screen_.ExitLoopClosure()();
@@ -235,6 +272,10 @@ void TuiDataFrameSet::run() {
         if (event == Event::Character('t')) { main_tab_ = 0; nav_level_ = 1; return true; }
         if (event == Event::Character('s')) { main_tab_ = 1; nav_level_ = 1; return true; }
         if (event == Event::Character('a')) { main_tab_ = 2; nav_level_ = 1; return true; }
+        if (event == Event::Character('f') && main_tab_ == 0) {
+            trace_searching_ = true;
+            return true;
+        }
 
         // ── Signal list (nav_level_ == 3) ─────────────────────────────────
         if (nav_level_ == 3) {
@@ -495,8 +536,8 @@ Element TuiDataFrameSet::render_trace() const {
     const int           idx        = sub_tab_trace_ < count ? sub_tab_trace_ : count - 1;
     const DataFrameSet& active_set = sets_.at(iface_names[idx]);
 
-    Elements frame_rows;
-    for (const auto& [id, frame] : active_set.frames()) {
+    // Helper: render one frame entry
+    auto make_frame_elem = [&](uint32_t id, const CanFrame& frame) -> Element {
         const std::string id_str = std::format("0x{:03X}", id);
 
         std::string delta_str = " | Δ ---    ";
@@ -512,8 +553,10 @@ Element TuiDataFrameSet::render_trace() const {
 
         const bool has_decoded = !frame.decoded().empty();
 
+        const std::string& name = frame.msg_name();
         Elements frame_block = {
             hbox(text(id_str) | bold,
+                 name.empty() ? text("") : text("  " + name) | bold,
                  text(" | DLC:" + std::to_string(frame.header().dlc)),
                  text(delta_str) | dim,
                  has_decoded ? text("") : text(" | " + hex_str) | dim),
@@ -521,12 +564,55 @@ Element TuiDataFrameSet::render_trace() const {
         for (const auto& sig : frame.decoded())
             frame_block.push_back(
                 text("    " + sig.name + ": " + std::to_string(sig.value) + " " + sig.unit));
-        frame_rows.push_back(vbox(std::move(frame_block)));
-    }
-    if (frame_rows.empty())
-        frame_rows.push_back(text("(no frames)") | dim);
+        return vbox(std::move(frame_block));
+    };
 
-    return vbox({sub_tabs, separator(), vbox(std::move(frame_rows))});
+    // Without active search: normal view (with optional empty search bar)
+    if (!trace_searching_ || trace_search_buf_.empty()) {
+        Elements frame_rows;
+        for (const auto& [id, frame] : active_set.frames())
+            frame_rows.push_back(make_frame_elem(id, frame));
+        if (frame_rows.empty())
+            frame_rows.push_back(text("(no frames)") | dim);
+
+        if (trace_searching_) {
+            Element search_bar = hbox(text("Suche: [") | dim,
+                                      text(trace_search_buf_),
+                                      text("_") | inverted,
+                                      text("]") | dim);
+            return vbox({sub_tabs, separator(), search_bar, separator(),
+                         vbox(std::move(frame_rows))});
+        }
+        return vbox({sub_tabs, separator(), vbox(std::move(frame_rows))});
+    }
+
+    // Active search with non-empty query: split into matched / unmatched
+    Elements matched_rows, unmatched_rows;
+    for (const auto& [id, frame] : active_set.frames()) {
+        if (trace_matches(id, frame, trace_search_buf_))
+            matched_rows.push_back(make_frame_elem(id, frame));
+        else
+            unmatched_rows.push_back(make_frame_elem(id, frame));
+    }
+    if (matched_rows.empty())
+        matched_rows.push_back(text("(keine Treffer)") | dim);
+    if (unmatched_rows.empty())
+        unmatched_rows.push_back(text("(keine weiteren Frames)") | dim);
+
+    Element search_bar = hbox(text("Suche: [") | dim,
+                               text(trace_search_buf_),
+                               text("_") | inverted,
+                               text("]") | dim);
+
+    return vbox({
+        sub_tabs,
+        separator(),
+        search_bar,
+        separator(),
+        vbox(std::move(matched_rows)) | flex,
+        separator(),
+        vbox(std::move(unmatched_rows)),
+    });
 }
 
 // ─── Send: message list ────────────────────────────────────────────────────
