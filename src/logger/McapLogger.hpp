@@ -45,11 +45,19 @@ private:
     google::protobuf::DynamicMessageFactory scalar_factory_;
     const google::protobuf::Descriptor*     scalar_descriptor_ = nullptr;
 
+    // Raw frame schema — used for playback (can_id + raw bytes)
+    google::protobuf::DescriptorPool        raw_pool_;
+    google::protobuf::DynamicMessageFactory raw_factory_;
+    const google::protobuf::Descriptor*     raw_descriptor_ = nullptr;
+
     const google::protobuf::Descriptor* get_fallback_descriptor();
     std::string serialize_fallback(const CanFrame& frame);
 
     const google::protobuf::Descriptor* get_scalar_descriptor();
     std::string serialize_scalar(double value);
+
+    const google::protobuf::Descriptor* get_raw_descriptor();
+    std::string serialize_raw(const CanFrame& frame);
 
     mcap::SchemaId get_or_register_schema(const google::protobuf::Descriptor* descriptor);
     mcap::ChannelId get_or_register_channel(const std::string& topic,

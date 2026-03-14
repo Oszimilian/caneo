@@ -6,6 +6,7 @@
 #include "frame/DataFrameSet.hpp"
 #include "gui/TuiDataFrameSet.hpp"
 #include "logger/McapLogger.hpp"
+#include "logger/McapReader.hpp"
 #include "logger/Logger.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
@@ -34,6 +35,7 @@ int main(int argc, char* argv[]) {
     bool debug_mode = false;
     std::string config_path;
     std::string model_path;
+    std::string playback_path;
     std::vector<std::string_view> iface_args;
 
     const auto args = std::span(argv + 1, argc - 1);
@@ -57,6 +59,12 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             model_path = args[++i];
+        } else if (arg == "--playback") {
+            if (i + 1 >= args.size()) {
+                std::println(stderr, "Error: --playback requires a file path.");
+                return 1;
+            }
+            playback_path = args[++i];
         } else {
             iface_args.push_back(arg);
         }
@@ -88,16 +96,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (config.interfaces.empty()) {
+    // In playback mode: auto-detect interfaces from MCAP if none were specified.
+    if (!playback_path.empty() && config.interfaces.empty()) {
+        for (const auto& iface : McapReader(playback_path).scan_interfaces()) {
+            InterfaceConfig cfg;
+            cfg.name = iface;
+            config.interfaces.push_back(std::move(cfg));
+        }
+    }
+
+    if (config.interfaces.empty() && playback_path.empty()) {
         std::println(stderr, "Error: no interfaces specified and no caneo.yaml found.");
         return 1;
     }
 
-    try {
-        setup_interfaces(config);
-    } catch (const std::exception& e) {
-        std::println(stderr, "Error setting up interfaces: {}", e.what());
-        return 1;
+    if (playback_path.empty()) {
+        try {
+            setup_interfaces(config);
+        } catch (const std::exception& e) {
+            std::println(stderr, "Error setting up interfaces: {}", e.what());
+            return 1;
+        }
     }
 
     const auto& iface_configs = config.interfaces;
@@ -106,15 +125,77 @@ int main(int argc, char* argv[]) {
     DecoderRegistry decoders;
     std::vector<std::unique_ptr<SocketCAN>> sockets;
 
-    if (tui_mode) {
-        // Build a socket map so the send function can look up sockets by interface name.
-        // The map is populated before io.run() starts, so it's safe to read from the asio thread.
-        std::map<std::string, SocketCAN*> socket_map;
+    // ── Shared helper: build socket_map for sending ──────────────────────────
+    std::map<std::string, SocketCAN*> socket_map;
 
+    if (!playback_path.empty()) {
+        // ════════════════════════════════════════════════════════════════════
+        // PLAYBACK MODE  (--playback file.mcap)
+        // Opens sockets for each interface (to send), then replays the MCAP.
+        // Optional: --tui shows a live trace of what is being replayed.
+        // ════════════════════════════════════════════════════════════════════
+        for (const auto& cfg : iface_configs) {
+            try {
+                auto& socket = sockets.emplace_back(
+                    std::make_unique<SocketCAN>(io, cfg.name));
+                socket_map[cfg.name] = socket.get();
+            } catch (const std::exception& e) {
+                std::println(stderr, "Warning: cannot open {}: {}", cfg.name, e.what());
+            }
+        }
+
+        McapReader::OnSend on_send = [&socket_map](const std::string& iface,
+                                                    uint32_t can_id,
+                                                    const std::vector<uint8_t>& payload) {
+            if (auto it = socket_map.find(iface); it != socket_map.end())
+                it->second->send(can_id, payload);
+        };
+
+        if (tui_mode) {
+            SendFn send_fn = [&socket_map](const std::string& iface, uint64_t id,
+                                           const std::vector<uint8_t>& data) {
+                if (auto it = socket_map.find(iface); it != socket_map.end())
+                    it->second->send(id, data);
+            };
+            ActionHandler action_handler(io, send_fn);
+            auto tui = std::make_shared<TuiDataFrameSet>(iface_configs, action_handler);
+
+            std::thread playback_thread([&playback_path, tui, &on_send] {
+                try {
+                    McapReader reader(playback_path);
+                    reader.play(
+                        [&tui](std::unique_ptr<CanFrame> frame) { tui->update(*frame); },
+                        on_send);
+                } catch (const std::exception& e) {
+                    std::println(stderr, "Playback error: {}", e.what());
+                }
+            });
+
+            std::thread asio_thread([&io] { io.run(); });
+            tui->run();
+            io.stop();
+            asio_thread.join();
+            playback_thread.join();
+        } else {
+            // No TUI — just replay on the bus and block until done.
+            std::thread asio_thread([&io] { io.run(); });
+            try {
+                McapReader reader(playback_path);
+                reader.play({}, on_send);  // no on_frame needed without TUI
+            } catch (const std::exception& e) {
+                std::println(stderr, "Playback error: {}", e.what());
+            }
+            io.stop();
+            asio_thread.join();
+        }
+
+    } else if (tui_mode) {
+        // ════════════════════════════════════════════════════════════════════
+        // LIVE TUI MODE  (--tui)
+        // ════════════════════════════════════════════════════════════════════
         SendFn send_fn = [&socket_map](const std::string& iface, uint64_t id,
                                        const std::vector<uint8_t>& data) {
-            auto it = socket_map.find(iface);
-            if (it != socket_map.end())
+            if (auto it = socket_map.find(iface); it != socket_map.end())
                 it->second->send(id, data);
         };
 
@@ -135,8 +216,6 @@ int main(int argc, char* argv[]) {
             logger = std::make_unique<McapLogger>(buf);
         }
 
-        // last timestamp per (interface, CAN-ID) for update-ratio computation
-        // Only accessed from the asio thread (inside onFrame callbacks).
         std::map<std::pair<std::string, uint32_t>,
                  std::chrono::steady_clock::time_point> last_frame_ts;
 
@@ -190,9 +269,12 @@ int main(int argc, char* argv[]) {
         tui->run();
         io.stop();
         asio_thread.join();
-        logger.reset(); // flush & close MCAP before returning
+        logger.reset();
 
     } else {
+        // ════════════════════════════════════════════════════════════════════
+        // LIVE NON-TUI MODE  (default)
+        // ════════════════════════════════════════════════════════════════════
         std::vector<DataFrameSet> sets;
         ProtoLogRegistry proto_registry;
 
@@ -204,7 +286,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Build logger (only when --log)
         std::unique_ptr<Logger> logger;
         if (log_mode) {
             const auto now = std::chrono::system_clock::now();
@@ -214,8 +295,6 @@ int main(int argc, char* argv[]) {
             logger = std::make_unique<McapLogger>(buf);
         }
 
-        // last timestamp per (interface, CAN-ID) for update-ratio computation
-        // Only accessed from the asio thread (inside onFrame callbacks).
         std::map<std::pair<std::string, uint32_t>,
                  std::chrono::steady_clock::time_point> last_frame_ts;
 
@@ -232,7 +311,8 @@ int main(int argc, char* argv[]) {
         }
 
         for (std::size_t i = 0; i < sets.size(); ++i) {
-            auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, sets[i].interface()));
+            auto& socket = sockets.emplace_back(
+                std::make_unique<SocketCAN>(io, sets[i].interface()));
             socket->onFrame([&sets, &decoders, &proto_registry, &logger, &debug_mode, &last_frame_ts, &model_engine, i](std::unique_ptr<DataFrame> frame) {
                 auto* canFrame = dynamic_cast<CanFrame*>(frame.get());
                 if (canFrame) {
@@ -242,9 +322,8 @@ int main(int argc, char* argv[]) {
                         model_engine->on_frame(*canFrame);
                 }
                 if (debug_mode) {
-                    for (const auto& set : sets) {
+                    for (const auto& set : sets)
                         std::println("{}", set);
-                    }
                     std::println("--------------------------------------------------");
                 }
                 if (canFrame) {
@@ -278,7 +357,7 @@ int main(int argc, char* argv[]) {
 
         boost::asio::signal_set signals(io, SIGINT, SIGTERM);
         signals.async_wait([&io, &logger](const boost::system::error_code&, int) {
-            logger.reset(); // close & flush MCAP while still on the io thread
+            logger.reset();
             io.stop();
         });
 

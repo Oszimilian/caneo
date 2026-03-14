@@ -1,5 +1,6 @@
 #define MCAP_IMPLEMENTATION
 #include "McapLogger.hpp"
+#include <mcap/reader.hpp>  // reader implementation compiled here via MCAP_IMPLEMENTATION
 #include "compat/print.hpp"
 
 #include <google/protobuf/descriptor.pb.h>
@@ -176,6 +177,55 @@ void McapLogger::log_scalar(const std::string& topic, double value) {
         std::println(stderr, "McapLogger: log_scalar write error: {}", status.message);
 }
 
+// ─── Raw frame schema (RawFrame) ────────────────────────────────────────────
+// Used to store original CAN bytes for playback via SocketCAN.
+
+const google::protobuf::Descriptor* McapLogger::get_raw_descriptor() {
+    if (raw_descriptor_) return raw_descriptor_;
+
+    google::protobuf::FileDescriptorProto file_proto;
+    file_proto.set_name("raw_frame.proto");
+    file_proto.set_syntax("proto2");
+
+    auto* msg_proto = file_proto.add_message_type();
+    msg_proto->set_name("RawFrame");
+
+    auto* f1 = msg_proto->add_field();
+    f1->set_name("can_id");
+    f1->set_number(1);
+    f1->set_type(google::protobuf::FieldDescriptorProto::TYPE_UINT32);
+    f1->set_label(google::protobuf::FieldDescriptorProto::LABEL_OPTIONAL);
+
+    // Store each payload byte as a uint32 (same pattern as RawCanFrame fallback).
+    // Avoids encoding issues with protobuf TYPE_BYTES in dynamic message pools.
+    auto* f2 = msg_proto->add_field();
+    f2->set_name("payload");
+    f2->set_number(2);
+    f2->set_type(google::protobuf::FieldDescriptorProto::TYPE_UINT32);
+    f2->set_label(google::protobuf::FieldDescriptorProto::LABEL_REPEATED);
+
+    const auto* file_desc = raw_pool_.BuildFile(file_proto);
+    if (file_desc)
+        raw_descriptor_ = file_desc->FindMessageTypeByName("RawFrame");
+    return raw_descriptor_;
+}
+
+std::string McapLogger::serialize_raw(const CanFrame& frame) {
+    const auto* desc = get_raw_descriptor();
+    if (!desc) return {};
+
+    std::unique_ptr<google::protobuf::Message> msg(
+        raw_factory_.GetPrototype(desc)->New());
+    const auto* refl = msg->GetReflection();
+    refl->SetUInt32(msg.get(), desc->FindFieldByName("can_id"), frame.header().id);
+    const auto* pl_field = desc->FindFieldByName("payload");
+    for (const uint8_t byte : frame.payload())
+        refl->AddUInt32(msg.get(), pl_field, byte);
+    std::string out;
+    msg->SerializeToString(&out);
+    return out;
+}
+
 // ─── log() ──────────────────────────────────────────────────────────────────
 
 void McapLogger::log(const CanFrame& frame,
@@ -210,6 +260,21 @@ void McapLogger::log(const CanFrame& frame,
 
     if (const auto status = writer_.write(msg); !status.ok())
         std::println(stderr, "McapLogger: write error: {}", status.message);
+
+    // ── raw channel (for playback) ────────────────────────────────────────────
+    if (const auto* raw_desc = get_raw_descriptor()) {
+        const std::string raw_data = serialize_raw(frame);
+        const mcap::SchemaId  raw_sid = get_or_register_schema(raw_desc);
+        const mcap::ChannelId raw_cid = get_or_register_channel(base_topic + "/raw", raw_sid);
+        mcap::Message raw_msg;
+        raw_msg.channelId   = raw_cid;
+        raw_msg.sequence    = 0;
+        raw_msg.logTime     = ts;
+        raw_msg.publishTime = ts;
+        raw_msg.data        = reinterpret_cast<const std::byte*>(raw_data.data());
+        raw_msg.dataSize    = raw_data.size();
+        writer_.write(raw_msg);
+    }
 
     // ── update_ratio channel ─────────────────────────────────────────────────
     if (update_ratio_ms)

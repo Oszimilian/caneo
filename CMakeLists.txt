@@ -32,6 +32,7 @@ add_executable(caneo
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
     src/logger/McapLogger.cpp
+    src/logger/McapReader.cpp
     src/model/SignalStore.cpp
     src/model/ModelEngine.cpp
 )
