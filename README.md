@@ -52,6 +52,13 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_
 cmake --build build
 ```
 
+Debug
+```bash
+conan install . --output-folder=build --build=missing --settings=build_type=Debug   
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
+
 The binary is located at `build/caneo`.
 
 ## Virtual CAN interface

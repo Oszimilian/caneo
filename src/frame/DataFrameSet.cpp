@@ -10,6 +10,16 @@ void DataFrameSet::update(const CanFrame& frame) {
     const uint32_t id = frame.header().id;
     if (const auto it = frames_.find(id); it != frames_.end()) {
         deltas_[id] = frame.timestamp() - it->second.timestamp();
+        if (frame.decoded().empty() && !it->second.decoded().empty()) {
+            // New frame not decoded (e.g. DLC mismatch) — keep previous signals
+            CanFrame merged = frame;
+            for (const auto& sig : it->second.decoded())
+                merged.addDecoded(sig);
+            if (merged.msg_name().empty())
+                merged.set_msg_name(it->second.msg_name());
+            frames_.insert_or_assign(id, std::move(merged));
+            return;
+        }
     }
     frames_.insert_or_assign(id, frame);
 }

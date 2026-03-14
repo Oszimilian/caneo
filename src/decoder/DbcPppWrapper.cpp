@@ -25,6 +25,8 @@ void DbcPppWrapper::decode(CanFrame& frame) {
     if (it == messages_.end()) return;
 
     const dbcppp::IMessage* msg = it->second;
+    if (frame.payload().size() < msg->MessageSize())
+        return;
     frame.set_msg_name(std::string(msg->Name()));
     const dbcppp::ISignal* mux_sig = msg->MuxSignal();
 

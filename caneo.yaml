@@ -1,8 +1,5 @@
 virtual: true
 interfaces:
-  vcan0: 
-    dbc: dbc/vcan0.dbc
-    baudrate: 1000000
-  vcan1: 
+  can0: 
     dbc: dbc/vcan0.dbc
     baudrate: 1000000

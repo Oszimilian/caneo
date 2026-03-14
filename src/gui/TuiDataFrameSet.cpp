@@ -12,19 +12,22 @@ using namespace ftxui;
 
 // ─── Trace search helper ───────────────────────────────────────────────────
 
+static std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
 static bool trace_matches(uint32_t id, const CanFrame& frame, const std::string& query) {
-    auto ci_contains = [](const std::string& hay, const std::string& needle) {
-        return std::search(hay.begin(), hay.end(), needle.begin(), needle.end(),
-                           [](char a, char b) {
-                               return std::tolower(static_cast<unsigned char>(a))
-                                   == std::tolower(static_cast<unsigned char>(b));
-                           }) != hay.end();
+    const std::string q = to_lower(query);
+    auto ci_contains = [&q](const std::string& hay) {
+        return to_lower(hay).find(q) != std::string::npos;
     };
-    if (ci_contains(std::format("0x{:03X}", id), query)) return true;
-    if (ci_contains(frame.msg_name(), query)) return true;
+    if (ci_contains(std::format("0x{:03X}", id))) return true;
+    if (ci_contains(frame.msg_name())) return true;
     for (const auto& sig : frame.decoded()) {
-        if (ci_contains(sig.name,  query)) return true;
-        if (ci_contains(sig.unit,  query)) return true;
+        if (ci_contains(sig.name)) return true;
+        if (ci_contains(sig.unit)) return true;
     }
     return false;
 }
@@ -325,6 +328,23 @@ void TuiDataFrameSet::run() {
                 if (send_sig_cursor_ < max_idx) ++send_sig_cursor_;
                 return true;
             }
+            if (event == Event::Character('1')) {
+                create_single_action();
+                return true;
+            }
+            if (event == Event::Character('2')) {
+                const SendModel* model = selected_send_model();
+                if (model && !model->messages().empty()) {
+                    const int msg_idx = std::min(send_msg_cursor_,
+                                                 static_cast<int>(model->messages().size()) - 1);
+                    if (msg_idx >= 0)
+                        send_sig_cursor_ = static_cast<int>(
+                            model->messages()[msg_idx].signals.size()) + 1;
+                }
+                send_period_editing_ = true;
+                send_period_buf_.clear();
+                return true;
+            }
             return false;
         }
 
@@ -448,7 +468,25 @@ void TuiDataFrameSet::run() {
 
             // Trace / Send: sub-tab navigation
             if (event == Event::ArrowUp) {
-                nav_level_ = 0;
+                if (main_tab_ == 0 && trace_cursor_ > 0) {
+                    --trace_cursor_;
+                } else {
+                    nav_level_ = 0;
+                }
+                return true;
+            }
+            if (event == Event::ArrowDown && main_tab_ == 0) {
+                std::lock_guard lock(mutex_);
+                const auto& active = sets_;
+                // count visible frames in the active interface
+                std::vector<std::string> names;
+                for (const auto& [n, _] : active) names.push_back(n);
+                if (!names.empty()) {
+                    const int idx = sub_tab_trace_ < static_cast<int>(names.size())
+                                        ? sub_tab_trace_ : static_cast<int>(names.size()) - 1;
+                    const int count = static_cast<int>(active.at(names[idx]).frames().size());
+                    if (trace_cursor_ + 1 < count) ++trace_cursor_;
+                }
                 return true;
             }
             if (event == Event::ArrowDown && main_tab_ == 1) {
@@ -462,8 +500,10 @@ void TuiDataFrameSet::run() {
             if (event == Event::ArrowRight) {
                 if (main_tab_ == 0) {
                     std::lock_guard lock(mutex_);
-                    if (!sets_.empty())
+                    if (!sets_.empty()) {
                         sub_tab_trace_ = (sub_tab_trace_ + 1) % static_cast<int>(sets_.size());
+                        trace_cursor_ = 0;
+                    }
                 } else {
                     if (!interfaces_.empty())
                         sub_tab_send_ = (sub_tab_send_ + 1) % static_cast<int>(interfaces_.size());
@@ -473,9 +513,11 @@ void TuiDataFrameSet::run() {
             if (event == Event::ArrowLeft) {
                 if (main_tab_ == 0) {
                     std::lock_guard lock(mutex_);
-                    if (!sets_.empty())
+                    if (!sets_.empty()) {
                         sub_tab_trace_ = (sub_tab_trace_ + static_cast<int>(sets_.size()) - 1)
                                          % static_cast<int>(sets_.size());
+                        trace_cursor_ = 0;
+                    }
                 } else {
                     if (!interfaces_.empty())
                         sub_tab_send_ = (sub_tab_send_ + static_cast<int>(interfaces_.size()) - 1)
@@ -567,33 +609,56 @@ Element TuiDataFrameSet::render_trace() const {
         return vbox(std::move(frame_block));
     };
 
-    // Without active search: normal view (with optional empty search bar)
+    // Build frame rows with cursor highlight
+    const auto& all_frames = active_set.frames();
+    int row_idx = 0;
+
+    auto make_scrollable_rows = [&](const std::vector<std::pair<uint32_t, const CanFrame*>>& entries) {
+        Elements rows;
+        for (const auto& [id, frame_ptr] : entries) {
+            const bool selected = (row_idx == trace_cursor_) && (nav_level_ >= 1);
+            Element elem = make_frame_elem(id, *frame_ptr);
+            if (selected) elem = elem | inverted | focus;
+            rows.push_back(std::move(elem));
+            ++row_idx;
+        }
+        return rows;
+    };
+
+    // Collect frame entries (ordered by id, as stored in the map)
+    std::vector<std::pair<uint32_t, const CanFrame*>> all_entries;
+    for (const auto& [id, frame] : all_frames)
+        all_entries.emplace_back(id, &frame);
+
+    // Without active search
     if (!trace_searching_ || trace_search_buf_.empty()) {
-        Elements frame_rows;
-        for (const auto& [id, frame] : active_set.frames())
-            frame_rows.push_back(make_frame_elem(id, frame));
+        Elements frame_rows = make_scrollable_rows(all_entries);
         if (frame_rows.empty())
             frame_rows.push_back(text("(no frames)") | dim);
+
+        Element content = vbox(std::move(frame_rows)) | vscroll_indicator | frame;
 
         if (trace_searching_) {
             Element search_bar = hbox(text("Suche: [") | dim,
                                       text(trace_search_buf_),
                                       text("_") | inverted,
                                       text("]") | dim);
-            return vbox({sub_tabs, separator(), search_bar, separator(),
-                         vbox(std::move(frame_rows))});
+            return vbox({sub_tabs, separator(), search_bar, separator(), content});
         }
-        return vbox({sub_tabs, separator(), vbox(std::move(frame_rows))});
+        return vbox({sub_tabs, separator(), content});
     }
 
     // Active search with non-empty query: split into matched / unmatched
-    Elements matched_rows, unmatched_rows;
-    for (const auto& [id, frame] : active_set.frames()) {
-        if (trace_matches(id, frame, trace_search_buf_))
-            matched_rows.push_back(make_frame_elem(id, frame));
+    std::vector<std::pair<uint32_t, const CanFrame*>> matched_entries, unmatched_entries;
+    for (const auto& [id, frame_ptr] : all_entries) {
+        if (trace_matches(id, *frame_ptr, trace_search_buf_))
+            matched_entries.emplace_back(id, frame_ptr);
         else
-            unmatched_rows.push_back(make_frame_elem(id, frame));
+            unmatched_entries.emplace_back(id, frame_ptr);
     }
+    
+    Elements matched_rows = make_scrollable_rows(matched_entries);
+    Elements unmatched_rows = make_scrollable_rows(unmatched_entries);
     if (matched_rows.empty())
         matched_rows.push_back(text("(keine Treffer)") | dim);
     if (unmatched_rows.empty())
@@ -609,9 +674,9 @@ Element TuiDataFrameSet::render_trace() const {
         separator(),
         search_bar,
         separator(),
-        vbox(std::move(matched_rows)) | flex,
+        vbox(std::move(matched_rows)) | vscroll_indicator | frame | flex,
         separator(),
-        vbox(std::move(unmatched_rows)),
+        vbox(std::move(unmatched_rows)) | vscroll_indicator | frame,
     });
 }
 
@@ -707,6 +772,9 @@ Element TuiDataFrameSet::render_sig_list(const SendModel& model) const {
         vbox(std::move(sig_rows)) | vscroll_indicator | frame,
         separator(),
         hbox(text("Raw: ") | dim, text(hex_str) | bold),
+        separator(),
+        hbox(text("[1]") | bold, text(" Single Action   "),
+             text("[2]") | bold, text(" Periodic Action")) | dim,
     });
 }
 
