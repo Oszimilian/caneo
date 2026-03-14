@@ -7,6 +7,8 @@
 #include "gui/TuiDataFrameSet.hpp"
 #include "logger/McapLogger.hpp"
 #include "logger/Logger.hpp"
+#include "model/ModelEngine.hpp"
+#include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
@@ -31,6 +33,7 @@ int main(int argc, char* argv[]) {
     bool log_mode = false;
     bool debug_mode = false;
     std::string config_path;
+    std::string model_path;
     std::vector<std::string_view> iface_args;
 
     const auto args = std::span(argv + 1, argc - 1);
@@ -48,6 +51,12 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             config_path = args[++i];
+        } else if (arg == "--model") {
+            if (i + 1 >= args.size()) {
+                std::println(stderr, "Error: --model requires a file path.");
+                return 1;
+            }
+            model_path = args[++i];
         } else {
             iface_args.push_back(arg);
         }
@@ -126,22 +135,51 @@ int main(int argc, char* argv[]) {
             logger = std::make_unique<McapLogger>(buf);
         }
 
+        // last timestamp per (interface, CAN-ID) for update-ratio computation
+        // Only accessed from the asio thread (inside onFrame callbacks).
+        std::map<std::pair<std::string, uint32_t>,
+                 std::chrono::steady_clock::time_point> last_frame_ts;
+
+        SignalStore signal_store;
+        std::unique_ptr<ModelEngine> model_engine;
+        if (!model_path.empty()) {
+            try {
+                model_engine = std::make_unique<ModelEngine>(
+                    model_path, signal_store, logger.get());
+            } catch (const std::exception& e) {
+                std::println(stderr, "Error loading model: {}", e.what());
+                return 1;
+            }
+        }
+
         for (const auto& cfg : iface_configs) {
             if (!cfg.dbc.empty())
                 decoders.add_interface(cfg.name, cfg.dbc);
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, cfg.name));
             socket_map[cfg.name] = socket.get();
-            socket->onFrame([tui, &decoders, &proto_registry, &logger](std::unique_ptr<DataFrame> frame) {
+            socket->onFrame([tui, &decoders, &proto_registry, &logger, &last_frame_ts, &model_engine](std::unique_ptr<DataFrame> frame) {
                 if (auto* canFrame = dynamic_cast<CanFrame*>(frame.get())) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}
                     tui->update(*canFrame);
+                    if (model_engine)
+                        model_engine->on_frame(*canFrame);
                     if (logger) {
                         const std::string serialized = proto_registry.serialize(*canFrame);
                         const auto* proto_log = proto_registry.get(canFrame->header().interface);
                         const auto* desc = proto_log
                             ? proto_log->descriptor(canFrame->header().id)
                             : nullptr;
-                        logger->log(*canFrame, desc, serialized);
+
+                        const auto key = std::make_pair(
+                            canFrame->header().interface, canFrame->header().id);
+                        std::optional<double> ratio_ms;
+                        if (const auto it = last_frame_ts.find(key);
+                            it != last_frame_ts.end())
+                            ratio_ms = std::chrono::duration<double, std::milli>(
+                                canFrame->timestamp() - it->second).count();
+                        last_frame_ts[key] = canFrame->timestamp();
+
+                        logger->log(*canFrame, desc, serialized, ratio_ms);
                     }
                 }
             });
@@ -176,13 +214,32 @@ int main(int argc, char* argv[]) {
             logger = std::make_unique<McapLogger>(buf);
         }
 
+        // last timestamp per (interface, CAN-ID) for update-ratio computation
+        // Only accessed from the asio thread (inside onFrame callbacks).
+        std::map<std::pair<std::string, uint32_t>,
+                 std::chrono::steady_clock::time_point> last_frame_ts;
+
+        SignalStore signal_store;
+        std::unique_ptr<ModelEngine> model_engine;
+        if (!model_path.empty()) {
+            try {
+                model_engine = std::make_unique<ModelEngine>(
+                    model_path, signal_store, logger.get());
+            } catch (const std::exception& e) {
+                std::println(stderr, "Error loading model: {}", e.what());
+                return 1;
+            }
+        }
+
         for (std::size_t i = 0; i < sets.size(); ++i) {
             auto& socket = sockets.emplace_back(std::make_unique<SocketCAN>(io, sets[i].interface()));
-            socket->onFrame([&sets, &decoders, &proto_registry, &logger, &debug_mode, i](std::unique_ptr<DataFrame> frame) {
+            socket->onFrame([&sets, &decoders, &proto_registry, &logger, &debug_mode, &last_frame_ts, &model_engine, i](std::unique_ptr<DataFrame> frame) {
                 auto* canFrame = dynamic_cast<CanFrame*>(frame.get());
                 if (canFrame) {
                     try { decoders.decode(*canFrame); } catch (const std::runtime_error&) {}
                     sets[i].update(*canFrame);
+                    if (model_engine)
+                        model_engine->on_frame(*canFrame);
                 }
                 if (debug_mode) {
                     for (const auto& set : sets) {
@@ -197,7 +254,17 @@ int main(int argc, char* argv[]) {
                         const auto* desc = proto_log
                             ? proto_log->descriptor(canFrame->header().id)
                             : nullptr;
-                        logger->log(*canFrame, desc, serialized);
+
+                        const auto key = std::make_pair(
+                            canFrame->header().interface, canFrame->header().id);
+                        std::optional<double> ratio_ms;
+                        if (const auto it = last_frame_ts.find(key);
+                            it != last_frame_ts.end())
+                            ratio_ms = std::chrono::duration<double, std::milli>(
+                                canFrame->timestamp() - it->second).count();
+                        last_frame_ts[key] = canFrame->timestamp();
+
+                        logger->log(*canFrame, desc, serialized, ratio_ms);
                     } else if (debug_mode) {
                         const std::string description = proto_registry.describe(*canFrame);
                         if (!description.empty())

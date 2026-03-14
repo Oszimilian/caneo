@@ -11,6 +11,8 @@ find_package(ftxui REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(protobuf REQUIRED)
 find_package(mcap REQUIRED)
+find_package(lua REQUIRED)
+find_package(sol2 REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -30,7 +32,9 @@ add_executable(caneo
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
     src/logger/McapLogger.cpp
+    src/model/SignalStore.cpp
+    src/model/ModelEngine.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf mcap::mcap)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf mcap::mcap lua::lua sol2::sol2)

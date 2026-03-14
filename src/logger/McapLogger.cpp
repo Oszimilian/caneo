@@ -118,16 +118,76 @@ std::string McapLogger::serialize_fallback(const CanFrame& frame) {
     return out;
 }
 
+// ─── Scalar schema (ScalarValue) ────────────────────────────────────────────
+// Shared by update_ratio channels and model output channels.
+
+const google::protobuf::Descriptor* McapLogger::get_scalar_descriptor() {
+    if (scalar_descriptor_) return scalar_descriptor_;
+
+    google::protobuf::FileDescriptorProto file_proto;
+    file_proto.set_name("scalar_value.proto");
+    file_proto.set_syntax("proto2");
+
+    auto* msg_proto = file_proto.add_message_type();
+    msg_proto->set_name("ScalarValue");
+
+    auto* f = msg_proto->add_field();
+    f->set_name("value");
+    f->set_number(1);
+    f->set_type(google::protobuf::FieldDescriptorProto::TYPE_DOUBLE);
+    f->set_label(google::protobuf::FieldDescriptorProto::LABEL_OPTIONAL);
+
+    const auto* file_desc = scalar_pool_.BuildFile(file_proto);
+    if (file_desc)
+        scalar_descriptor_ = file_desc->FindMessageTypeByName("ScalarValue");
+    return scalar_descriptor_;
+}
+
+std::string McapLogger::serialize_scalar(double value) {
+    const auto* desc = get_scalar_descriptor();
+    if (!desc) return {};
+
+    std::unique_ptr<google::protobuf::Message> msg(
+        scalar_factory_.GetPrototype(desc)->New());
+    msg->GetReflection()->SetDouble(msg.get(), desc->FindFieldByName("value"), value);
+    std::string out;
+    msg->SerializeToString(&out);
+    return out;
+}
+
+void McapLogger::log_scalar(const std::string& topic, double value) {
+    const auto* desc = get_scalar_descriptor();
+    if (!desc) return;
+
+    const std::string data     = serialize_scalar(value);
+    const mcap::SchemaId  sid  = get_or_register_schema(desc);
+    const mcap::ChannelId cid  = get_or_register_channel(topic, sid);
+    const uint64_t ts          = now_ns();
+
+    mcap::Message msg;
+    msg.channelId   = cid;
+    msg.sequence    = 0;
+    msg.logTime     = ts;
+    msg.publishTime = ts;
+    msg.data        = reinterpret_cast<const std::byte*>(data.data());
+    msg.dataSize    = data.size();
+
+    if (const auto status = writer_.write(msg); !status.ok())
+        std::println(stderr, "McapLogger: log_scalar write error: {}", status.message);
+}
+
 // ─── log() ──────────────────────────────────────────────────────────────────
 
 void McapLogger::log(const CanFrame& frame,
                      const google::protobuf::Descriptor* descriptor,
-                     const std::string& serialized)
+                     const std::string& serialized,
+                     std::optional<double> update_ratio_ms)
 {
-    const std::string topic = descriptor
+    const std::string base_topic = descriptor
         ? frame.header().interface + "/" + descriptor->name()
         : frame.header().interface + "/" + std::format("0x{:03X}", frame.header().id);
 
+    // ── data channel ─────────────────────────────────────────────────────────
     const google::protobuf::Descriptor* desc = descriptor
         ? descriptor : get_fallback_descriptor();
     if (!desc) return;
@@ -136,7 +196,7 @@ void McapLogger::log(const CanFrame& frame,
     const std::string& data = descriptor ? serialized : fallback_data;
 
     const mcap::SchemaId  schema_id  = get_or_register_schema(desc);
-    const mcap::ChannelId channel_id = get_or_register_channel(topic, schema_id);
+    const mcap::ChannelId channel_id = get_or_register_channel(base_topic + "/data", schema_id);
 
     const uint64_t ts = now_ns();
 
@@ -148,7 +208,10 @@ void McapLogger::log(const CanFrame& frame,
     msg.data        = reinterpret_cast<const std::byte*>(data.data());
     msg.dataSize    = data.size();
 
-    const auto status = writer_.write(msg);
-    if (!status.ok())
+    if (const auto status = writer_.write(msg); !status.ok())
         std::println(stderr, "McapLogger: write error: {}", status.message);
+
+    // ── update_ratio channel ─────────────────────────────────────────────────
+    if (update_ratio_ms)
+        log_scalar(base_topic + "/update_ratio", *update_ratio_ms);
 }

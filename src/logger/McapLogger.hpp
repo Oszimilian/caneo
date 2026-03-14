@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -20,7 +21,10 @@ public:
 
     void log(const CanFrame& frame,
              const google::protobuf::Descriptor* descriptor,
-             const std::string& serialized) override;
+             const std::string& serialized,
+             std::optional<double> update_ratio_ms = std::nullopt) override;
+
+    void log_scalar(const std::string& topic, double value) override;
 
 private:
     mcap::McapWriter writer_;
@@ -36,8 +40,16 @@ private:
     google::protobuf::DynamicMessageFactory fallback_factory_;
     const google::protobuf::Descriptor*     fallback_descriptor_ = nullptr;
 
+    // Generic scalar schema — used for update_ratio and model outputs
+    google::protobuf::DescriptorPool        scalar_pool_;
+    google::protobuf::DynamicMessageFactory scalar_factory_;
+    const google::protobuf::Descriptor*     scalar_descriptor_ = nullptr;
+
     const google::protobuf::Descriptor* get_fallback_descriptor();
     std::string serialize_fallback(const CanFrame& frame);
+
+    const google::protobuf::Descriptor* get_scalar_descriptor();
+    std::string serialize_scalar(double value);
 
     mcap::SchemaId get_or_register_schema(const google::protobuf::Descriptor* descriptor);
     mcap::ChannelId get_or_register_channel(const std::string& topic,
