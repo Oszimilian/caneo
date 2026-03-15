@@ -16,3 +16,4 @@ class CaneoConan(ConanFile):
         self.requires("mcap/2.1.1")
         self.requires("lua/5.4.6")
         self.requires("sol2/3.3.0")
+        self.requires("gflags/2.2.2")

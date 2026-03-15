@@ -13,6 +13,7 @@ find_package(protobuf REQUIRED)
 find_package(mcap REQUIRED)
 find_package(lua REQUIRED)
 find_package(sol2 REQUIRED)
+find_package(gflags REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -25,6 +26,7 @@ add_executable(caneo
     src/decoder/DecoderRegistry.cpp
     src/gui/TuiDataFrameSet.cpp
     src/config/Config.cpp
+    src/config/AppConfig.cpp
     src/setup/InterfaceSetup.cpp
     src/send/SendModel.cpp
     src/action/Action.cpp
@@ -35,7 +37,10 @@ add_executable(caneo
     src/logger/McapReader.cpp
     src/model/SignalStore.cpp
     src/model/ModelEngine.cpp
+    src/modes/run_playback.cpp
+    src/modes/run_tui.cpp
+    src/modes/run_live.cpp
 )
 
 target_include_directories(caneo PRIVATE src)
-target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf mcap::mcap lua::lua sol2::sol2)
+target_link_libraries(caneo PRIVATE Boost::system dbcppp::dbcppp ftxui::component ftxui::dom ftxui::screen yaml-cpp::yaml-cpp protobuf::libprotobuf mcap::mcap lua::lua sol2::sol2 gflags::gflags)
