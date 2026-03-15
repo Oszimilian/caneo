@@ -104,16 +104,27 @@ public:
 
     void pause();   // override: accumulates elapsed time before pausing
     void resume();  // override: records resume timestamp
+
+    // Getters
+    double                    amplitude()  const { return amplitude_; }
+    std::chrono::milliseconds sin_period() const { return sin_period_; }
+    double                    offset()     const { return offset_; }
+
+    // Setters (call on asio thread via ActionHandler::update_sin_param)
+    void set_amplitude(double v)                      { amplitude_  = v; }
+    void set_sin_period(std::chrono::milliseconds ms) { sin_period_ = ms; }
+    void set_offset(double v)                         { offset_     = v; }
+
 protected:
     void schedule() override;
 private:
-    double elapsed_seconds() const;  // running time excluding pauses
+    double elapsed_seconds() const;
 
     std::chrono::milliseconds             interval_;
     EncodeWithValueFn                     encode_fn_;
     double                                amplitude_;
     std::chrono::milliseconds             sin_period_;
     double                                offset_;
-    std::chrono::steady_clock::time_point resume_time_;   // when last resumed
-    std::chrono::duration<double>         accumulated_{};  // total running time before last pause
+    std::chrono::steady_clock::time_point resume_time_;
+    std::chrono::duration<double>         accumulated_{};
 };

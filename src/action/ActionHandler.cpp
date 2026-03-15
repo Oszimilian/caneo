@@ -1,5 +1,7 @@
 #include "ActionHandler.hpp"
 
+#include <chrono>
+
 ActionHandler::ActionHandler(boost::asio::io_context& io, SendFn send_fn)
     : io_(io), send_fn_(std::move(send_fn)) {}
 
@@ -43,6 +45,20 @@ void ActionHandler::toggle_pause(std::size_t idx) {
     });
 }
 
+void ActionHandler::update_sin_param(std::size_t idx, int param, double value) {
+    boost::asio::post(io_, [this, idx, param, value] {
+        if (idx >= actions_.size()) return;
+        auto* s = dynamic_cast<SinPeriodicAction*>(actions_[idx].get());
+        if (!s) return;
+        switch (param) {
+            case 0: s->set_amplitude(value); break;
+            case 1: s->set_sin_period(std::chrono::milliseconds(static_cast<long>(value))); break;
+            case 2: s->set_offset(value); break;
+        }
+        rebuild_snapshot();
+    });
+}
+
 void ActionHandler::update_payload(std::size_t idx, std::vector<uint8_t> payload) {
     boost::asio::post(io_, [this, idx, p = std::move(payload)]() mutable {
         if (idx < actions_.size())
@@ -73,6 +89,9 @@ void ActionHandler::rebuild_snapshot() {
             .interface   = actions_[i]->interface(),
             .is_periodic = actions_[i]->is_periodic(),
             .paused      = actions_[i]->is_paused(),
+            .sin_amplitude = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->amplitude()          : 0.0; }(),
+            .sin_period_ms = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->sin_period().count() : 0L;  }(),
+            .sin_offset    = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->offset()             : 0.0; }(),
             .period      = actions_[i]->period(),
             .last_sent   = actions_[i]->last_sent(),
             .ever_sent   = actions_[i]->ever_sent(),

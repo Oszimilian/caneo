@@ -18,6 +18,10 @@ struct ActionInfo {
     std::string                           interface;
     bool                                  is_periodic;
     bool                                  paused;
+    // Sin-specific (only valid when type_name == "Sin")
+    double                                sin_amplitude = 0;
+    long                                  sin_period_ms = 0;
+    double                                sin_offset    = 0;
     std::chrono::milliseconds             period;
     std::chrono::steady_clock::time_point last_sent;
     bool                                  ever_sent;
@@ -31,6 +35,7 @@ public:
     void add_action(std::unique_ptr<Action> action);
     void remove_action(std::size_t idx);
     void toggle_pause(std::size_t idx);
+    void update_sin_param(std::size_t idx, int param, double value); // param: 0=amplitude 1=period 2=offset
     void update_payload(std::size_t idx, std::vector<uint8_t> payload);
 
     // Accessors for constructing Action objects

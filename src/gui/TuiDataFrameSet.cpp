@@ -159,10 +159,22 @@ void TuiDataFrameSet::run() {
         // ── Actions signal edit ───────────────────────────────────────────
         if (actions_editing_) {
             if (event == Event::Return || event == Event::ArrowLeft) {
-                // commit value into SendModel, then re-encode + update action payload
                 const auto snap = action_handler_.snapshot();
                 if (actions_cursor_ < static_cast<int>(snap.size()) && !actions_edit_buf_.empty()) {
                     const ActionInfo& info = snap[actions_cursor_];
+                    // Sin action: update sin parameter directly
+                    if (info.type_name == "Sin") {
+                        try {
+                            action_handler_.update_sin_param(
+                                static_cast<std::size_t>(actions_cursor_),
+                                actions_sig_cursor_,
+                                std::stod(actions_edit_buf_));
+                        } catch (...) {}
+                        actions_editing_ = false;
+                        actions_edit_buf_.clear();
+                        return true;
+                    }
+                    // Regular action: commit value into SendModel, re-encode + update payload
                     auto it = send_models_.find(info.interface);
                     if (it != send_models_.end()) {
                         SendModel& model = *it->second;
@@ -501,21 +513,30 @@ void TuiDataFrameSet::run() {
                     return true;
                 }
                 if (event == Event::ArrowRight || event == Event::Return) {
-                    // Enter signal edit mode
                     const auto snap = action_handler_.snapshot();
                     if (actions_cursor_ < static_cast<int>(snap.size())) {
                         const ActionInfo& info = snap[actions_cursor_];
-                        auto it = send_models_.find(info.interface);
-                        if (it != send_models_.end()) {
-                            const auto& msgs = it->second->messages();
-                            for (const auto& msg : msgs) {
-                                if (msg.id == info.msg_id && !msg.signals.empty()) {
-                                    const auto& sig = msg.signals[std::min(
-                                        actions_sig_cursor_,
-                                        static_cast<int>(msg.signals.size()) - 1)];
-                                    actions_edit_buf_ = std::format("{:.6g}", sig.value);
-                                    actions_editing_  = true;
-                                    break;
+                        if (info.type_name == "Sin") {
+                            // Prefill with current sin parameter value
+                            switch (actions_sig_cursor_) {
+                                case 0: actions_edit_buf_ = std::format("{:.6g}", info.sin_amplitude); break;
+                                case 1: actions_edit_buf_ = std::to_string(info.sin_period_ms);        break;
+                                case 2: actions_edit_buf_ = std::format("{:.6g}", info.sin_offset);    break;
+                            }
+                            actions_editing_ = true;
+                        } else {
+                            auto it = send_models_.find(info.interface);
+                            if (it != send_models_.end()) {
+                                const auto& msgs = it->second->messages();
+                                for (const auto& msg : msgs) {
+                                    if (msg.id == info.msg_id && !msg.signals.empty()) {
+                                        const auto& sig = msg.signals[std::min(
+                                            actions_sig_cursor_,
+                                            static_cast<int>(msg.signals.size()) - 1)];
+                                        actions_edit_buf_ = std::format("{:.6g}", sig.value);
+                                        actions_editing_  = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -530,13 +551,17 @@ void TuiDataFrameSet::run() {
                     const auto snap = action_handler_.snapshot();
                     if (actions_cursor_ < static_cast<int>(snap.size())) {
                         const ActionInfo& info = snap[actions_cursor_];
-                        auto it = send_models_.find(info.interface);
-                        if (it != send_models_.end()) {
-                            for (const auto& msg : it->second->messages()) {
-                                if (msg.id == info.msg_id) {
-                                    const int max = static_cast<int>(msg.signals.size()) - 1;
-                                    if (actions_sig_cursor_ < max) ++actions_sig_cursor_;
-                                    break;
+                        if (info.type_name == "Sin") {
+                            if (actions_sig_cursor_ < 2) ++actions_sig_cursor_;
+                        } else {
+                            auto it = send_models_.find(info.interface);
+                            if (it != send_models_.end()) {
+                                for (const auto& msg : it->second->messages()) {
+                                    if (msg.id == info.msg_id) {
+                                        const int max = static_cast<int>(msg.signals.size()) - 1;
+                                        if (actions_sig_cursor_ < max) ++actions_sig_cursor_;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1041,10 +1066,35 @@ Element TuiDataFrameSet::render_action_signals(const ActionInfo& info) const {
         return text("Message nicht in DBC gefunden.") | dim | center;
 
     const SendMessage& msg = *msg_ptr;
-    Element header = text(std::format("◀ [{}] 0x{:03X}  {}  ({}, {}ms)",
+    Element header = text(std::format("◀ [{}] 0x{:03X}  {}  ({}, {}ms interval)",
                                       info.interface, msg.id, msg.name,
                                       info.type_name,
                                       info.period.count())) | bold;
+
+    // Sin action: show sin parameters instead of signal list
+    if (info.type_name == "Sin") {
+        const std::array<std::pair<std::string, std::string>, 3> fields{{
+            {"Amplitude: ", std::format("{:.6g}", info.sin_amplitude)},
+            {"Period:    ", std::format("{} ms",  info.sin_period_ms)},
+            {"Offset:    ", std::format("{:.6g}", info.sin_offset)},
+        }};
+        Elements rows;
+        for (int i = 0; i < 3; ++i) {
+            const bool is_cur = (i == actions_sig_cursor_);
+            const bool editing = is_cur && actions_editing_;
+            Element val = editing
+                ? (hbox(text("["), text(actions_edit_buf_), text("_]")) | inverted)
+                : text(fields[i].second);
+            Element row = hbox(
+                text(is_cur ? "▶ " : "  "),
+                text(fields[i].first) | (is_cur ? bold : nothing),
+                val);
+            if (is_cur && !editing && nav_level_ == 2) row = row | inverted;
+            if (is_cur) row = row | focus;
+            rows.push_back(std::move(row));
+        }
+        return vbox({header, separator(), vbox(std::move(rows)) | frame});
+    }
 
     Elements sig_rows;
     for (int i = 0; i < static_cast<int>(msg.signals.size()); ++i) {
