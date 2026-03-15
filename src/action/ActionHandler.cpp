@@ -32,6 +32,17 @@ std::vector<ActionInfo> ActionHandler::snapshot() const {
     return snapshot_;
 }
 
+void ActionHandler::toggle_pause(std::size_t idx) {
+    boost::asio::post(io_, [this, idx] {
+        if (idx >= actions_.size()) return;
+        if (actions_[idx]->is_paused())
+            actions_[idx]->resume();
+        else
+            actions_[idx]->pause();
+        rebuild_snapshot();
+    });
+}
+
 void ActionHandler::update_payload(std::size_t idx, std::vector<uint8_t> payload) {
     boost::asio::post(io_, [this, idx, p = std::move(payload)]() mutable {
         if (idx < actions_.size())
@@ -58,8 +69,10 @@ void ActionHandler::rebuild_snapshot() {
             .idx         = i,
             .msg_id      = actions_[i]->msg_id(),
             .msg_name    = actions_[i]->msg_name(),
+            .type_name   = actions_[i]->type_name(),
             .interface   = actions_[i]->interface(),
             .is_periodic = actions_[i]->is_periodic(),
+            .paused      = actions_[i]->is_paused(),
             .period      = actions_[i]->period(),
             .last_sent   = actions_[i]->last_sent(),
             .ever_sent   = actions_[i]->ever_sent(),

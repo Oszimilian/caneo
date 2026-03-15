@@ -14,8 +14,10 @@ struct ActionInfo {
     std::size_t                           idx;
     uint64_t                              msg_id;
     std::string                           msg_name;
+    std::string                           type_name;
     std::string                           interface;
     bool                                  is_periodic;
+    bool                                  paused;
     std::chrono::milliseconds             period;
     std::chrono::steady_clock::time_point last_sent;
     bool                                  ever_sent;
@@ -28,6 +30,7 @@ public:
     // Thread-safe: callable from any thread
     void add_action(std::unique_ptr<Action> action);
     void remove_action(std::size_t idx);
+    void toggle_pause(std::size_t idx);
     void update_payload(std::size_t idx, std::vector<uint8_t> payload);
 
     // Accessors for constructing Action objects

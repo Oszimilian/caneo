@@ -32,6 +32,9 @@ public:
 
     void start(std::function<void()> on_fired, std::function<void()> on_done);
     void cancel();
+    virtual void pause();   // cancels timer, sets paused flag
+    virtual void resume();  // clears paused flag, reschedules
+    bool is_paused() const { return paused_; }
     void set_payload(std::vector<uint8_t> payload) { payload_ = std::move(payload); }
 
 protected:
@@ -48,6 +51,7 @@ protected:
     std::function<void()>                 on_done_;
     std::chrono::steady_clock::time_point last_sent_{};
     bool                                  ever_sent_ = false;
+    bool                                  paused_    = false;
 };
 
 class SingleAction : public Action {
@@ -77,4 +81,39 @@ protected:
     void schedule() override;
 private:
     std::chrono::milliseconds period_;
+};
+
+class SinPeriodicAction : public Action {
+public:
+    using EncodeWithValueFn = std::function<std::vector<uint8_t>(double)>;
+
+    SinPeriodicAction(boost::asio::io_context&  io,
+                      std::string               interface,
+                      uint64_t                  msg_id,
+                      std::string               msg_name,
+                      SendFn                    send_fn,
+                      std::chrono::milliseconds interval,
+                      EncodeWithValueFn         encode_fn,
+                      double                    amplitude,
+                      std::chrono::milliseconds sin_period,
+                      double                    offset);
+
+    bool                      is_periodic() const override { return true; }
+    std::string               type_name()   const override { return "Sin"; }
+    std::chrono::milliseconds period()      const override { return interval_; }
+
+    void pause();   // override: accumulates elapsed time before pausing
+    void resume();  // override: records resume timestamp
+protected:
+    void schedule() override;
+private:
+    double elapsed_seconds() const;  // running time excluding pauses
+
+    std::chrono::milliseconds             interval_;
+    EncodeWithValueFn                     encode_fn_;
+    double                                amplitude_;
+    std::chrono::milliseconds             sin_period_;
+    double                                offset_;
+    std::chrono::steady_clock::time_point resume_time_;   // when last resumed
+    std::chrono::duration<double>         accumulated_{};  // total running time before last pause
 };

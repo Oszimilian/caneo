@@ -43,6 +43,7 @@ private:
 
     void create_single_action();
     void create_periodic_action(std::chrono::milliseconds period);
+    void create_sin_action(double amplitude, std::chrono::milliseconds sin_period, double offset);
 
     // Interface + send models
     std::vector<std::string>                          interfaces_;
@@ -75,9 +76,15 @@ private:
     bool        actions_editing_    = false;
     std::string actions_edit_buf_;
 
-    // Period input (for PeriodicAction creation)
-    bool        send_period_editing_ = false;
-    std::string send_period_buf_;
+    // Periodic / Sin action creation state machine
+    enum class PeriodicStep { None, Period, TypeSelect, SinAmplitude, SinPeriod, SinOffset, SinReady };
+    PeriodicStep periodic_step_        = PeriodicStep::None;
+    std::string  periodic_interval_buf_;
+    long         periodic_interval_ms_ = 0;
+    int          periodic_type_cursor_ = 0;  // 0 = Constant, 1 = Sin
+    std::string  sin_amplitude_buf_;
+    std::string  sin_period_buf_;
+    std::string  sin_offset_buf_;
 
     // ── Trace search & scroll (ftxui thread only) ────────────────────────
     bool        trace_searching_   = false;

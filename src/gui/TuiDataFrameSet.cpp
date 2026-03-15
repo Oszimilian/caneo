@@ -113,6 +113,40 @@ void TuiDataFrameSet::create_periodic_action(std::chrono::milliseconds period) {
         period));
 }
 
+void TuiDataFrameSet::create_sin_action(double amplitude,
+                                         std::chrono::milliseconds sin_period,
+                                         double offset) {
+    SendModel* model = selected_send_model();
+    if (!model || model->messages().empty()) return;
+    const int msg_idx = std::min(send_msg_cursor_, static_cast<int>(model->messages().size()) - 1);
+    if (msg_idx < 0) return;
+    const SendMessage& msg = model->messages()[msg_idx];
+
+    const int sig_count = static_cast<int>(msg.signals.size());
+    if (sig_count == 0) return;
+    const std::size_t sig_idx = static_cast<std::size_t>(std::min(send_sig_cursor_, sig_count - 1));
+    const std::size_t mi      = static_cast<std::size_t>(msg_idx);
+
+    // Encode callback runs on the asio thread; captures raw model ptr (owned by send_models_)
+    SinPeriodicAction::EncodeWithValueFn encode_fn =
+        [model, mi, sig_idx](double v) {
+            model->set_value(mi, sig_idx, v);
+            return model->encode(mi);
+        };
+
+    action_handler_.add_action(std::make_unique<SinPeriodicAction>(
+        action_handler_.io_ref(),
+        selected_send_iface(),
+        msg.id,
+        msg.name,
+        action_handler_.send_fn_ref(),
+        std::chrono::milliseconds(periodic_interval_ms_),
+        std::move(encode_fn),
+        amplitude,
+        sin_period,
+        offset));
+}
+
 // ─── Event loop ────────────────────────────────────────────────────────────
 
 void TuiDataFrameSet::run() {
@@ -175,34 +209,109 @@ void TuiDataFrameSet::run() {
             return false;
         }
 
-        // ── Period input ──────────────────────────────────────────────────
-        if (send_period_editing_) {
-            if (event == Event::Return || event == Event::ArrowLeft || event == Event::ArrowRight) {
-                if (!send_period_buf_.empty()) {
-                    try {
-                        const auto ms = static_cast<long>(std::stod(send_period_buf_));
-                        if (ms > 0)
-                            create_periodic_action(std::chrono::milliseconds(ms));
-                    } catch (...) {}
+        // ── Periodic / Sin action state machine ───────────────────────────
+        if (periodic_step_ != PeriodicStep::None) {
+            using PS = PeriodicStep;
+
+            auto reset_periodic = [this] {
+                periodic_step_        = PS::None;
+                periodic_interval_buf_.clear();
+                periodic_interval_ms_ = 0;
+                periodic_type_cursor_ = 0;
+                sin_amplitude_buf_.clear();
+                sin_period_buf_.clear();
+                sin_offset_buf_.clear();
+            };
+
+            if (event == Event::Escape) { reset_periodic(); return true; }
+
+            // Step: entering interval (ms)
+            if (periodic_step_ == PS::Period) {
+                if (event == Event::Return || event == Event::ArrowRight) {
+                    if (!periodic_interval_buf_.empty()) {
+                        try {
+                            periodic_interval_ms_ = std::stol(periodic_interval_buf_);
+                            if (periodic_interval_ms_ > 0)
+                                periodic_step_ = PS::TypeSelect;
+                        } catch (...) {}
+                    }
+                    return true;
                 }
-                send_period_editing_ = false;
-                send_period_buf_.clear();
-                return true;
+                if (event == Event::Backspace) {
+                    if (!periodic_interval_buf_.empty()) periodic_interval_buf_.pop_back();
+                    return true;
+                }
+                if (event.is_character() && std::isdigit(static_cast<unsigned char>(event.character()[0]))) {
+                    periodic_interval_buf_ += event.character()[0];
+                    return true;
+                }
+                return false;
             }
-            if (event == Event::Escape) {
-                send_period_editing_ = false;
-                send_period_buf_.clear();
-                return true;
+
+            // Step: Constant vs Sin
+            if (periodic_step_ == PS::TypeSelect) {
+                if (event == Event::ArrowLeft || event == Event::ArrowRight) {
+                    periodic_type_cursor_ = 1 - periodic_type_cursor_;
+                    return true;
+                }
+                if (event == Event::Return) {
+                    if (periodic_type_cursor_ == 0) {
+                        create_periodic_action(std::chrono::milliseconds(periodic_interval_ms_));
+                        reset_periodic();
+                    } else {
+                        periodic_step_ = PS::SinAmplitude;
+                    }
+                    return true;
+                }
+                if (event == Event::ArrowUp) { periodic_step_ = PS::Period; return true; }
+                return false;
             }
-            if (event == Event::Backspace) {
-                if (!send_period_buf_.empty()) send_period_buf_.pop_back();
-                return true;
+
+            // Helper for numeric field input (digits + optional '.' and leading '-')
+            auto handle_num = [&](std::string& buf, bool allow_decimal) -> bool {
+                if (event == Event::Backspace) {
+                    if (!buf.empty()) buf.pop_back();
+                    return true;
+                }
+                if (event.is_character()) {
+                    const char c = event.character()[0];
+                    if (std::isdigit(static_cast<unsigned char>(c))) { buf += c; return true; }
+                    if (allow_decimal && c == '.' && buf.find('.') == std::string::npos) { buf += c; return true; }
+                    if (allow_decimal && c == '-' && buf.empty()) { buf += c; return true; }
+                    return true;  // swallow other characters
+                }
+                return false;
+            };
+
+            if (periodic_step_ == PS::SinAmplitude) {
+                if (event == Event::Return || event == Event::ArrowDown) { periodic_step_ = PS::SinPeriod;   return true; }
+                if (event == Event::ArrowUp)                              { periodic_step_ = PS::TypeSelect; return true; }
+                return handle_num(sin_amplitude_buf_, true);
             }
-            if (event.is_character()) {
-                const char c = event.character()[0];
-                if (std::isdigit(static_cast<unsigned char>(c)))
-                    send_period_buf_ += c;
-                return true;
+            if (periodic_step_ == PS::SinPeriod) {
+                if (event == Event::Return || event == Event::ArrowDown) { periodic_step_ = PS::SinOffset;    return true; }
+                if (event == Event::ArrowUp)                              { periodic_step_ = PS::SinAmplitude; return true; }
+                return handle_num(sin_period_buf_, false);
+            }
+            if (periodic_step_ == PS::SinOffset) {
+                if (event == Event::Return || event == Event::ArrowDown) { periodic_step_ = PS::SinReady;  return true; }
+                if (event == Event::ArrowUp)                              { periodic_step_ = PS::SinPeriod; return true; }
+                return handle_num(sin_offset_buf_, true);
+            }
+            if (periodic_step_ == PS::SinReady) {
+                if (event == Event::Return || event == Event::ArrowRight) {
+                    try {
+                        const double amp    = sin_amplitude_buf_.empty() ? 0.0  : std::stod(sin_amplitude_buf_);
+                        const long   sp_ms  = sin_period_buf_.empty()    ? 1000 : std::stol(sin_period_buf_);
+                        const double offset = sin_offset_buf_.empty()    ? 0.0  : std::stod(sin_offset_buf_);
+                        if (sp_ms > 0)
+                            create_sin_action(amp, std::chrono::milliseconds(sp_ms), offset);
+                    } catch (...) {}
+                    reset_periodic();
+                    return true;
+                }
+                if (event == Event::ArrowUp) { periodic_step_ = PS::SinOffset; return true; }
+                return false;
             }
             return false;
         }
@@ -290,7 +399,7 @@ void TuiDataFrameSet::run() {
                 nav_level_ = 2;
                 return true;
             }
-            if (event == Event::ArrowRight) {
+            if (event == Event::ArrowRight || event == Event::Return) {
                 const SendModel* model = selected_send_model();
                 if (model) {
                     const int msg_idx = std::min(send_msg_cursor_,
@@ -308,8 +417,8 @@ void TuiDataFrameSet::run() {
                             create_single_action();
                         } else {
                             // Periodic Action button
-                            send_period_editing_ = true;
-                            send_period_buf_.clear();
+                            periodic_step_ = PeriodicStep::Period;
+                            periodic_interval_buf_.clear();
                         }
                     }
                 }
@@ -345,8 +454,8 @@ void TuiDataFrameSet::run() {
                         send_sig_cursor_ = static_cast<int>(
                             model->messages()[msg_idx].signals.size()) + 1;
                 }
-                send_period_editing_ = true;
-                send_period_buf_.clear();
+                periodic_step_ = PeriodicStep::Period;
+                periodic_interval_buf_.clear();
                 return true;
             }
             return false;
@@ -391,7 +500,7 @@ void TuiDataFrameSet::run() {
                     nav_level_ = 1;
                     return true;
                 }
-                if (event == Event::ArrowRight) {
+                if (event == Event::ArrowRight || event == Event::Return) {
                     // Enter signal edit mode
                     const auto snap = action_handler_.snapshot();
                     if (actions_cursor_ < static_cast<int>(snap.size())) {
@@ -442,7 +551,7 @@ void TuiDataFrameSet::run() {
                 nav_level_ = 1;
                 return true;
             }
-            if (event == Event::ArrowRight) {
+            if (event == Event::ArrowRight || event == Event::Return) {
                 const SendModel* model = selected_send_model();
                 if (model && !model->messages().empty()) {
                     send_sig_cursor_ = 0;
@@ -486,7 +595,7 @@ void TuiDataFrameSet::run() {
                         playback_ctrl_->toggle(snap[playback_cursor_].first);
                     return true;
                 }
-                if (event == Event::ArrowRight) {
+                if (event == Event::ArrowRight || event == Event::Return) {
                     const auto snap = playback_ctrl_->snapshot();
                     if (playback_cursor_ < static_cast<int>(snap.size())) {
                         playback_msg_cursor_ = 0;
@@ -512,12 +621,18 @@ void TuiDataFrameSet::run() {
                         ++actions_cursor_;
                     return true;
                 }
-                if (event == Event::ArrowRight) {
+                if (event == Event::ArrowRight || event == Event::Return) {
                     const auto snap = action_handler_.snapshot();
                     if (actions_cursor_ < static_cast<int>(snap.size())) {
                         actions_sig_cursor_ = 0;
                         nav_level_          = 2;
                     }
+                    return true;
+                }
+                if (event == Event::Character(' ')) {
+                    const auto snap = action_handler_.snapshot();
+                    if (actions_cursor_ < static_cast<int>(snap.size()))
+                        action_handler_.toggle_pause(snap[actions_cursor_].idx);
                     return true;
                 }
                 if (event == Event::Delete || event == Event::Backspace) {
@@ -814,19 +929,60 @@ Element TuiDataFrameSet::render_sig_list(const SendModel& model) const {
     if (cur_single)                    single_row = single_row | focus;
     sig_rows.push_back(std::move(single_row));
 
+    using PS = PeriodicStep;
+    const bool in_periodic = (periodic_step_ != PS::None);
+
     Element periodic_row;
-    if (cur_periodic && send_period_editing_) {
+    if (cur_periodic && periodic_step_ == PS::Period) {
         periodic_row = hbox(
-            text("▶ "),
-            text("[ Periodic Action ]   Periode: ["),
-            text(send_period_buf_),
+            text("▶ [ Periodic Action ]   Interval: ["),
+            text(periodic_interval_buf_),
             text("_] ms")) | bold | inverted;
+    } else if (cur_periodic && in_periodic) {
+        periodic_row = hbox(
+            text("▶ [ Periodic Action ]   Interval: "),
+            text(std::to_string(periodic_interval_ms_) + " ms")) | bold | inverted;
     } else {
         periodic_row = hbox(text(cur_periodic ? "▶ " : "  "), text("[ Periodic Action ]"));
         if (cur_periodic && nav_level_ == 3) periodic_row = periodic_row | bold | inverted;
     }
     if (cur_periodic) periodic_row = periodic_row | focus;
     sig_rows.push_back(std::move(periodic_row));
+
+    // TypeSelect
+    if (cur_periodic && periodic_step_ == PS::TypeSelect) {
+        const bool on_const = (periodic_type_cursor_ == 0);
+        Element const_elem = text("[Constant]");
+        if (on_const)  const_elem = const_elem | bold | inverted;
+        else           const_elem = const_elem | dim;
+        Element sin_elem = text("[Sin]");
+        if (!on_const) sin_elem = sin_elem | bold | inverted;
+        else           sin_elem = sin_elem | dim;
+        sig_rows.push_back(hbox(
+            text("    "),
+            text(on_const  ? "▶ " : "  "), std::move(const_elem),
+            text("   "),
+            text(!on_const ? "▶ " : "  "), std::move(sin_elem)));
+    }
+
+    // Sin parameter fields (shown once we're past TypeSelect)
+    if (cur_periodic && static_cast<int>(periodic_step_) >= static_cast<int>(PS::SinAmplitude)) {
+        auto field = [&](const std::string& label, const std::string& buf,
+                         const std::string& unit, PS step) {
+            const bool active = (periodic_step_ == step);
+            Element val = active
+                ? hbox(text("["), text(buf), text("_]"))
+                : text(buf.empty() ? "-" : buf);
+            Element row = hbox(text("    "), text(label) | dim, val, text(" " + unit) | dim);
+            sig_rows.push_back(active ? (row | bold | inverted) : row);
+        };
+        field("Amplitude: ", sin_amplitude_buf_, "",   PS::SinAmplitude);
+        field("Period:    ", sin_period_buf_,    "ms", PS::SinPeriod);
+        field("Offset:    ", sin_offset_buf_,    "",   PS::SinOffset);
+
+        Element start = hbox(text("    "), text("[ Start ]"));
+        sig_rows.push_back(periodic_step_ == PS::SinReady ? (start | bold | inverted) : (start | dim));
+    }
 
     // ── Raw frame preview ─────────────────────────────────────────────────
     const std::vector<uint8_t> raw = model.encode(static_cast<std::size_t>(msg_idx));
@@ -885,11 +1041,10 @@ Element TuiDataFrameSet::render_action_signals(const ActionInfo& info) const {
         return text("Message nicht in DBC gefunden.") | dim | center;
 
     const SendMessage& msg = *msg_ptr;
-    Element header = text(std::format("◀ [{}] 0x{:03X}  {}  ({})",
+    Element header = text(std::format("◀ [{}] 0x{:03X}  {}  ({}, {}ms)",
                                       info.interface, msg.id, msg.name,
-                                      info.is_periodic
-                                          ? std::format("{}ms", info.period.count())
-                                          : std::string("Single"))) | bold;
+                                      info.type_name,
+                                      info.period.count())) | bold;
 
     Elements sig_rows;
     for (int i = 0; i < static_cast<int>(msg.signals.size()); ++i) {
@@ -968,14 +1123,15 @@ Element TuiDataFrameSet::render_actions() const {
         }
 
         const std::string label = std::format(
-            "{}0x{:03X}  {:<20}  {:<8}  {}  {}  {}",
+            "{}0x{:03X}  {:<20}  {:<8}  {}  {}  {}  {}",
             sel ? "▶ " : "  ",
             a.msg_id,
             a.msg_name,
-            a.is_periodic ? "Periodic" : "Single",
+            a.type_name,
             period_str,
             a.interface,
-            last_str);
+            last_str,
+            a.paused ? "[paused]" : "");
 
         Element row = text(label);
         if (sel && nav_level_ == 1) row = row | bold | inverted;
@@ -991,6 +1147,7 @@ Element TuiDataFrameSet::render_actions() const {
         vbox(std::move(rows)) | vscroll_indicator | frame,
         separator(),
         hbox(text("[→]") | bold, text(" Signale bearbeiten  "),
+             text("[Space]") | bold, text(" Pause/Resume  "),
              text("[Del]") | bold, text(" Action löschen")) | dim,
     });
 }
