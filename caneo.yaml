@@ -1,4 +1,5 @@
 virtual: true
+log_file_path: ~/Dokumente/Logs
 interfaces:
   can0: 
     dbc: dbc/vcan0.dbc

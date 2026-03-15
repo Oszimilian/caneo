@@ -1,14 +1,29 @@
 #include "Config.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <yaml-cpp/yaml.h>
+
+static std::filesystem::path expand_path(const std::string& raw) {
+    if (raw == ".")
+        return std::filesystem::current_path();
+    if (raw.starts_with("~/")) {
+        const char* home = std::getenv("HOME");
+        if (home)
+            return std::filesystem::path(home) / raw.substr(2);
+    }
+    return raw;
+}
 
 static Config parse_config(const YAML::Node& root) {
     Config result;
 
     if (root["virtual"])
         result.virtual_can = root["virtual"].as<bool>();
+
+    if (root["log_file_path"])
+        result.log_file_path = expand_path(root["log_file_path"].as<std::string>());
 
     const auto& interfaces = root["interfaces"];
     if (!interfaces)

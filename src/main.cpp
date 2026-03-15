@@ -15,6 +15,7 @@
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
 
+#include <filesystem>
 #include <map>
 
 #include <boost/asio.hpp>
@@ -28,6 +29,17 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+static std::string make_log_path(const std::optional<std::filesystem::path>& base) {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    char name[32];
+    std::strftime(name, sizeof(name), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
+
+    std::filesystem::path dir = base.value_or(std::filesystem::current_path());
+    std::filesystem::create_directories(dir);
+    return (dir / name).string();
+}
 
 int main(int argc, char* argv[]) {
 
@@ -220,11 +232,7 @@ int main(int argc, char* argv[]) {
                 if (!cfg.dbc.empty())
                     proto_registry.add_interface(cfg.name, cfg.dbc);
 
-            const auto now = std::chrono::system_clock::now();
-            const std::time_t t = std::chrono::system_clock::to_time_t(now);
-            char buf[32];
-            std::strftime(buf, sizeof(buf), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
-            logger = std::make_unique<McapLogger>(buf);
+            logger = std::make_unique<McapLogger>(make_log_path(config.log_file_path));
         }
 
         std::map<std::pair<std::string, uint32_t>,
@@ -298,13 +306,8 @@ int main(int argc, char* argv[]) {
         }
 
         std::unique_ptr<Logger> logger;
-        if (log_mode) {
-            const auto now = std::chrono::system_clock::now();
-            const std::time_t t = std::chrono::system_clock::to_time_t(now);
-            char buf[32];
-            std::strftime(buf, sizeof(buf), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
-            logger = std::make_unique<McapLogger>(buf);
-        }
+        if (log_mode)
+            logger = std::make_unique<McapLogger>(make_log_path(config.log_file_path));
 
         std::map<std::pair<std::string, uint32_t>,
                  std::chrono::steady_clock::time_point> last_frame_ts;

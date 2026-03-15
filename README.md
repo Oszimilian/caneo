@@ -30,7 +30,7 @@ The binary is located at `build/caneo`.
 
 For an interactive shell inside the container:
 ```bash
-docker run -it -v .:/build/:Z caneo-builder bash
+    docker run -it -v .:/build/:Z caneo-builder bash
 ```
 
 > **Note:** The `:Z` flag is required on Fedora/RHEL due to SELinux.

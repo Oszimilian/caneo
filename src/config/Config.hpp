@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,8 +13,9 @@ struct InterfaceConfig {
 };
 
 struct Config {
-    bool                        virtual_can = false;
-    std::vector<InterfaceConfig> interfaces;
+    bool                             virtual_can = false;
+    std::optional<std::filesystem::path> log_file_path; // nullopt if not set
+    std::vector<InterfaceConfig>     interfaces;
 };
 
 Config                load_config(const std::string& path);
