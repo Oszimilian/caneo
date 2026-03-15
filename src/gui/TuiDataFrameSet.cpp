@@ -352,6 +352,37 @@ void TuiDataFrameSet::run() {
             return false;
         }
 
+        // ── nav_level_ == 2: playback message filter ──────────────────────
+        if (nav_level_ == 2 && main_tab_ == 3 && playback_ctrl_) {
+            if (event == Event::ArrowLeft) {
+                nav_level_ = 1;
+                return true;
+            }
+            if (event == Event::ArrowUp) {
+                if (playback_msg_cursor_ > 0) --playback_msg_cursor_;
+                return true;
+            }
+            if (event == Event::ArrowDown) {
+                const auto snap = playback_ctrl_->snapshot();
+                if (playback_cursor_ < static_cast<int>(snap.size())) {
+                    const auto msgs = playback_ctrl_->message_snapshot(
+                        snap[playback_cursor_].first);
+                    // 0 = All, 1..N = individual
+                    if (playback_msg_cursor_ < static_cast<int>(msgs.size()))
+                        ++playback_msg_cursor_;
+                }
+                return true;
+            }
+            if (event == Event::Return) {
+                const auto snap = playback_ctrl_->snapshot();
+                if (playback_cursor_ < static_cast<int>(snap.size()))
+                    playback_ctrl_->toggle_message(snap[playback_cursor_].first,
+                                                   playback_msg_cursor_);
+                return true;
+            }
+            return false;
+        }
+
         // ── nav_level_ == 2: message list (Send) or action signal view (Actions) ──
         if (nav_level_ == 2) {
             if (main_tab_ == 2) {
@@ -436,7 +467,7 @@ void TuiDataFrameSet::run() {
 
         // ── Sub-tabs / Action list (nav_level_ == 1) ──────────────────────
         if (nav_level_ == 1) {
-            // Playback tab: interface list + p to toggle
+            // Playback tab: interface list
             if (main_tab_ == 3 && playback_ctrl_) {
                 if (event == Event::ArrowUp) {
                     if (playback_cursor_ > 0) --playback_cursor_;
@@ -453,6 +484,14 @@ void TuiDataFrameSet::run() {
                     const auto snap = playback_ctrl_->snapshot();
                     if (playback_cursor_ < static_cast<int>(snap.size()))
                         playback_ctrl_->toggle(snap[playback_cursor_].first);
+                    return true;
+                }
+                if (event == Event::ArrowRight) {
+                    const auto snap = playback_ctrl_->snapshot();
+                    if (playback_cursor_ < static_cast<int>(snap.size())) {
+                        playback_msg_cursor_ = 0;
+                        nav_level_ = 2;
+                    }
                     return true;
                 }
                 return false;
@@ -966,6 +1005,50 @@ Element TuiDataFrameSet::render_playback() const {
     if (snap.empty())
         return text("No interfaces.") | dim | center;
 
+    // ── Message filter view (nav_level_ >= 2) ────────────────────────────
+    if (nav_level_ >= 2 && playback_cursor_ < static_cast<int>(snap.size())) {
+        const std::string& iface = snap[playback_cursor_].first;
+        const auto msgs = playback_ctrl_->message_snapshot(iface);
+
+        const bool any_on = std::any_of(msgs.begin(), msgs.end(),
+                                        [](const auto& p) { return p.second; });
+
+        // "All" row at index 0
+        const bool all_sel = (playback_msg_cursor_ == 0);
+        const std::string all_check = any_on ? "[✓]" : "[ ]";
+        Element all_row = hbox(
+            text(all_sel ? "▶ " : "  "),
+            text(all_check + " ") | (any_on ? color(Color::Green) : color(Color::Red)),
+            text("Alle Messages") | bold);
+        if (all_sel) all_row = all_row | inverted | focus;
+
+        Elements rows;
+        rows.push_back(std::move(all_row));
+        rows.push_back(separator());
+
+        for (int i = 0; i < static_cast<int>(msgs.size()); ++i) {
+            const auto& [name, enabled] = msgs[i];
+            const bool sel = (playback_msg_cursor_ == i + 1);
+            const std::string check = enabled ? "[✓]" : "[ ]";
+            Element row = hbox(
+                text(sel ? "▶ " : "  "),
+                text(check + " ") | (enabled ? color(Color::Green) : color(Color::Red)),
+                text(name));
+            if (sel) row = row | inverted | focus;
+            rows.push_back(std::move(row));
+        }
+
+        return vbox({
+            hbox(text("◀ ") | dim, text(iface) | bold),
+            separator(),
+            vbox(std::move(rows)) | vscroll_indicator | frame,
+            separator(),
+            hbox(text("[Enter]") | bold, text(" aktivieren / deaktivieren  "),
+                 text("[←]") | bold, text(" zurück")) | dim,
+        });
+    }
+
+    // ── Interface list (nav_level_ == 1) ─────────────────────────────────
     Elements rows;
     for (int i = 0; i < static_cast<int>(snap.size()); ++i) {
         const auto& [name, running] = snap[i];
@@ -988,7 +1071,8 @@ Element TuiDataFrameSet::render_playback() const {
     return vbox({
         vbox(std::move(rows)) | vscroll_indicator | frame,
         separator(),
-        hbox(text("[Enter]") | bold, text(" Interface starten / pausieren")) | dim,
+        hbox(text("[Enter]") | bold, text(" starten / pausieren  "),
+             text("[→]") | bold, text(" Messages filtern")) | dim,
     });
 }
 

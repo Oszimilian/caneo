@@ -56,9 +56,10 @@ private:
 
     // ── Navigation (ftxui thread only) ───────────────────────────────────
     // nav_level_: 0=MainTabs  1=SubTabs/ActionList  2=MsgList  3=SigList
-    int  nav_level_       = 0;
-    int  main_tab_        = 0; // 0=Trace  1=Send  2=Actions  3=Playback (optional)
-    int  playback_cursor_ = 0;
+    int  nav_level_          = 0;
+    int  main_tab_           = 0; // 0=Trace  1=Send  2=Actions  3=Playback (optional)
+    int  playback_cursor_    = 0; // selected interface in playback tab
+    int  playback_msg_cursor_ = 0; // 0=All, 1..N=individual message
     int  sub_tab_trace_   = 0;
     int  sub_tab_send_    = 0;
     int  send_msg_cursor_ = 0;

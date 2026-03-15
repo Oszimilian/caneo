@@ -163,6 +163,8 @@ int main(int argc, char* argv[]) {
             std::vector<std::string> iface_names;
             for (const auto& cfg : iface_configs) iface_names.push_back(cfg.name);
             PlaybackController playback_ctrl(iface_names);
+            for (const auto& [iface, msgs] : McapReader(playback_path).scan_messages())
+                playback_ctrl.set_messages(iface, msgs);
 
             auto tui = std::make_shared<TuiDataFrameSet>(
                 iface_configs, action_handler, &playback_ctrl);

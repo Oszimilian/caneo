@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -95,6 +96,31 @@ std::vector<std::string> McapReader::scan_interfaces() const
     return {ifaces.begin(), ifaces.end()};
 }
 
+std::map<std::string, std::vector<std::string>> McapReader::scan_messages() const
+{
+    std::ifstream file(path_, std::ios::binary);
+    if (!file.is_open()) return {};
+
+    mcap::FileStreamReader stream(file);
+    mcap::McapReader reader;
+    if (!reader.open(stream).ok()) return {};
+
+    reader.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan);
+
+    std::map<std::string, std::set<std::string>> iface_msgs;
+    for (const auto& [id, channel] : reader.channels()) {
+        const auto info = classify_topic(channel->topic);
+        if (info.kind == ChannelKind::Data && !info.iface.empty() && !info.msg_name.empty())
+            iface_msgs[info.iface].insert(info.msg_name);
+    }
+    reader.close();
+
+    std::map<std::string, std::vector<std::string>> result;
+    for (const auto& [iface, msgs] : iface_msgs)
+        result[iface] = {msgs.begin(), msgs.end()};
+    return result;
+}
+
 void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
                       PlaybackController* controller)
 {
@@ -169,10 +195,18 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
         }
         const auto target = start_time +
             std::chrono::nanoseconds(view.message.logTime - t0_ns);
-        std::this_thread::sleep_until(target);
+        if (controller) {
+            if (controller->sleep_until(target)) break;
+        } else {
+            std::this_thread::sleep_until(target);
+        }
 
         // Skip frames for paused interfaces (timing still advances above).
         if (controller && !controller->is_running(info.iface))
+            continue;
+
+        // Skip messages disabled via the playback filter.
+        if (controller && !controller->is_message_enabled(info.iface, info.msg_name))
             continue;
 
         const auto schema_it = schemas.find(view.channel->schemaId);

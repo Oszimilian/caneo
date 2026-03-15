@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,9 @@ public:
     // Returns the unique interface names found in /raw channels of the MCAP.
     // Use this to know which sockets to open before calling play().
     std::vector<std::string> scan_interfaces() const;
+
+    // Returns message names per interface (from /data channels).
+    std::map<std::string, std::vector<std::string>> scan_messages() const;
 
     void play(const OnFrame& on_frame, const OnSend& on_send = {},
               PlaybackController* controller = nullptr);
