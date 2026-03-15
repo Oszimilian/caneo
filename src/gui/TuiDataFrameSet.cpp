@@ -35,8 +35,9 @@ static bool trace_matches(uint32_t id, const CanFrame& frame, const std::string&
 // ─── Construction ──────────────────────────────────────────────────────────
 
 TuiDataFrameSet::TuiDataFrameSet(const std::vector<InterfaceConfig>& iface_configs,
-                                 ActionHandler&                      action_handler)
-    : action_handler_(action_handler)
+                                 ActionHandler&                      action_handler,
+                                 PlaybackController*                 playback_ctrl)
+    : action_handler_(action_handler), playback_ctrl_(playback_ctrl)
 {
     for (const auto& cfg : iface_configs) {
         interfaces_.push_back(cfg.name);
@@ -275,6 +276,9 @@ void TuiDataFrameSet::run() {
         if (event == Event::Character('t')) { main_tab_ = 0; nav_level_ = 1; return true; }
         if (event == Event::Character('s')) { main_tab_ = 1; nav_level_ = 1; return true; }
         if (event == Event::Character('a')) { main_tab_ = 2; nav_level_ = 1; return true; }
+        if (event == Event::Character('p') && playback_ctrl_) {
+            main_tab_ = 3; nav_level_ = 1; return true;
+        }
         if (event == Event::Character('f') && main_tab_ == 0) {
             trace_searching_ = true;
             return true;
@@ -432,6 +436,28 @@ void TuiDataFrameSet::run() {
 
         // ── Sub-tabs / Action list (nav_level_ == 1) ──────────────────────
         if (nav_level_ == 1) {
+            // Playback tab: interface list + p to toggle
+            if (main_tab_ == 3 && playback_ctrl_) {
+                if (event == Event::ArrowUp) {
+                    if (playback_cursor_ > 0) --playback_cursor_;
+                    else nav_level_ = 0;
+                    return true;
+                }
+                if (event == Event::ArrowDown) {
+                    const auto snap = playback_ctrl_->snapshot();
+                    if (playback_cursor_ + 1 < static_cast<int>(snap.size()))
+                        ++playback_cursor_;
+                    return true;
+                }
+                if (event == Event::Return) {
+                    const auto snap = playback_ctrl_->snapshot();
+                    if (playback_cursor_ < static_cast<int>(snap.size()))
+                        playback_ctrl_->toggle(snap[playback_cursor_].first);
+                    return true;
+                }
+                return false;
+            }
+
             // Actions tab: navigate action list
             if (main_tab_ == 2) {
                 if (event == Event::ArrowUp) {
@@ -533,13 +559,16 @@ void TuiDataFrameSet::run() {
             nav_level_ = 1;
             return true;
         }
-        if (event == Event::ArrowRight) {
-            main_tab_ = (main_tab_ + 1) % 3;
-            return true;
-        }
-        if (event == Event::ArrowLeft) {
-            main_tab_ = (main_tab_ + 2) % 3;
-            return true;
+        {
+            const int tab_count = playback_ctrl_ ? 4 : 3;
+            if (event == Event::ArrowRight) {
+                main_tab_ = (main_tab_ + 1) % tab_count;
+                return true;
+            }
+            if (event == Event::ArrowLeft) {
+                main_tab_ = (main_tab_ + tab_count - 1) % tab_count;
+                return true;
+            }
         }
         return false;
     });
@@ -927,19 +956,58 @@ Element TuiDataFrameSet::render_actions() const {
     });
 }
 
+// ─── Playback ──────────────────────────────────────────────────────────────
+
+Element TuiDataFrameSet::render_playback() const {
+    if (!playback_ctrl_)
+        return text("No playback active.") | dim | center;
+
+    const auto snap = playback_ctrl_->snapshot();
+    if (snap.empty())
+        return text("No interfaces.") | dim | center;
+
+    Elements rows;
+    for (int i = 0; i < static_cast<int>(snap.size()); ++i) {
+        const auto& [name, running] = snap[i];
+        const bool sel = (i == playback_cursor_);
+
+        Element status = running
+            ? (text("  Running") | color(Color::Green))
+            : (text("  Paused ") | color(Color::Yellow));
+
+        Element row = hbox(
+            text(sel ? "▶ " : "  "),
+            text(name) | bold,
+            std::move(status));
+
+        if (sel && nav_level_ == 1) row = row | inverted;
+        if (sel)                    row = row | focus;
+        rows.push_back(std::move(row));
+    }
+
+    return vbox({
+        vbox(std::move(rows)) | vscroll_indicator | frame,
+        separator(),
+        hbox(text("[Enter]") | bold, text(" Interface starten / pausieren")) | dim,
+    });
+}
+
 // ─── Top-level render ──────────────────────────────────────────────────────
 
 Element TuiDataFrameSet::render() const {
     std::lock_guard lock(mutex_);
 
-    const Element main_tabs =
-        make_tab_bar({"Trace", "Send", "Actions"}, main_tab_, nav_level_ == 0);
+    std::vector<std::string> tab_labels = {"Trace", "Send", "Actions"};
+    if (playback_ctrl_) tab_labels.push_back("Playback");
+
+    const Element main_tabs = make_tab_bar(tab_labels, main_tab_, nav_level_ == 0);
 
     Element content;
     switch (main_tab_) {
-        case 0:  content = render_trace();   break;
-        case 1:  content = render_send();    break;
-        default: content = render_actions(); break;
+        case 0:  content = render_trace();    break;
+        case 1:  content = render_send();     break;
+        case 2:  content = render_actions();  break;
+        default: content = render_playback(); break;
     }
 
     return window(text(" caneo "), vbox({main_tabs, separator(), content}));

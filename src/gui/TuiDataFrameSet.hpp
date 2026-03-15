@@ -4,6 +4,7 @@
 #include "action/ActionHandler.hpp"
 #include "config/Config.hpp"
 #include "frame/DataFrameSet.hpp"
+#include "playback/PlaybackController.hpp"
 #include "send/SendModel.hpp"
 
 #include <ftxui/component/screen_interactive.hpp>
@@ -18,7 +19,8 @@
 class TuiDataFrameSet : public GuiDataFrameSet {
 public:
     TuiDataFrameSet(const std::vector<InterfaceConfig>& iface_configs,
-                    ActionHandler&                      action_handler);
+                    ActionHandler&                      action_handler,
+                    PlaybackController*                 playback_ctrl = nullptr);
 
     void update(const CanFrame& frame) override;
     void run() override;
@@ -32,6 +34,7 @@ private:
     ftxui::Element render_sig_list(const SendModel& model) const;
     ftxui::Element render_actions() const;
     ftxui::Element render_action_signals(const ActionInfo& info) const;
+    ftxui::Element render_playback() const;
 
     // Helpers
     const std::string& selected_send_iface() const;
@@ -48,10 +51,14 @@ private:
     // Action handler (externally owned)
     ActionHandler& action_handler_;
 
+    // Playback controller (null when not in playback mode)
+    PlaybackController* playback_ctrl_ = nullptr;
+
     // ── Navigation (ftxui thread only) ───────────────────────────────────
     // nav_level_: 0=MainTabs  1=SubTabs/ActionList  2=MsgList  3=SigList
     int  nav_level_       = 0;
-    int  main_tab_        = 0; // 0=Trace  1=Send  2=Actions
+    int  main_tab_        = 0; // 0=Trace  1=Send  2=Actions  3=Playback (optional)
+    int  playback_cursor_ = 0;
     int  sub_tab_trace_   = 0;
     int  sub_tab_send_    = 0;
     int  send_msg_cursor_ = 0;

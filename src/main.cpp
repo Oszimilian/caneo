@@ -10,6 +10,7 @@
 #include "logger/Logger.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
+#include "playback/PlaybackController.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/SocketCAN.hpp"
@@ -110,7 +111,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (playback_path.empty()) {
+    if (!config.interfaces.empty()) {
         try {
             setup_interfaces(config);
         } catch (const std::exception& e) {
@@ -158,14 +159,21 @@ int main(int argc, char* argv[]) {
                     it->second->send(id, data);
             };
             ActionHandler action_handler(io, send_fn);
-            auto tui = std::make_shared<TuiDataFrameSet>(iface_configs, action_handler);
 
-            std::thread playback_thread([&playback_path, tui, &on_send] {
+            std::vector<std::string> iface_names;
+            for (const auto& cfg : iface_configs) iface_names.push_back(cfg.name);
+            PlaybackController playback_ctrl(iface_names);
+
+            auto tui = std::make_shared<TuiDataFrameSet>(
+                iface_configs, action_handler, &playback_ctrl);
+
+            std::thread playback_thread([&playback_path, tui, &on_send, &playback_ctrl] {
                 try {
                     McapReader reader(playback_path);
                     reader.play(
                         [&tui](std::unique_ptr<CanFrame> frame) { tui->update(*frame); },
-                        on_send);
+                        on_send,
+                        &playback_ctrl);
                 } catch (const std::exception& e) {
                     std::println(stderr, "Playback error: {}", e.what());
                 }
@@ -173,6 +181,7 @@ int main(int argc, char* argv[]) {
 
             std::thread asio_thread([&io] { io.run(); });
             tui->run();
+            playback_ctrl.stop();
             io.stop();
             asio_thread.join();
             playback_thread.join();

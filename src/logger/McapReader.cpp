@@ -95,7 +95,8 @@ std::vector<std::string> McapReader::scan_interfaces() const
     return {ifaces.begin(), ifaces.end()};
 }
 
-void McapReader::play(const OnFrame& on_frame, const OnSend& on_send)
+void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
+                      PlaybackController* controller)
 {
     std::ifstream file(path_, std::ios::binary);
     if (!file.is_open())
@@ -151,6 +152,15 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send)
 
         const auto& info = ch_it->second;
 
+        // If all interfaces are paused, block here.
+        // After the wait, reset the timing reference so playback resumes
+        // from this message without a catch-up burst.
+        if (controller && !controller->any_running()) {
+            controller->wait_for_any_running();
+            if (controller->is_stopped()) break;
+            started = false; // recalibrate timing
+        }
+
         // Pace to original timing.
         if (!started) {
             started    = true;
@@ -160,6 +170,10 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send)
         const auto target = start_time +
             std::chrono::nanoseconds(view.message.logTime - t0_ns);
         std::this_thread::sleep_until(target);
+
+        // Skip frames for paused interfaces (timing still advances above).
+        if (controller && !controller->is_running(info.iface))
+            continue;
 
         const auto schema_it = schemas.find(view.channel->schemaId);
         if (schema_it == schemas.end()) continue;

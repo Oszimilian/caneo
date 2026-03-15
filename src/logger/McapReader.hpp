@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frame/CanFrame.hpp"
+#include "playback/PlaybackController.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -9,9 +10,12 @@
 
 // Reads an MCAP file and replays CAN frames at original speed.
 //
-//   on_frame  – called for each /data channel message (decoded signals → TUI)
-//   on_send   – called for each /raw channel message (raw bytes → SocketCAN send)
-//               optional; pass {} to skip actual bus transmission
+//   on_frame   – called for each /data channel message (decoded signals → TUI)
+//   on_send    – called for each /raw channel message (raw bytes → SocketCAN send)
+//                optional; pass {} to skip actual bus transmission
+//   controller – optional per-interface pause/resume controller; when all
+//                interfaces are paused the thread blocks and timing resets on
+//                resume so playback continues without a catch-up burst.
 class McapReader {
 public:
     explicit McapReader(const std::string& path);
@@ -25,7 +29,8 @@ public:
     // Use this to know which sockets to open before calling play().
     std::vector<std::string> scan_interfaces() const;
 
-    void play(const OnFrame& on_frame, const OnSend& on_send = {});
+    void play(const OnFrame& on_frame, const OnSend& on_send = {},
+              PlaybackController* controller = nullptr);
 
 private:
     std::string path_;
