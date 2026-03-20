@@ -76,17 +76,29 @@ void ModelWindow::render()
             ImGui::Separator();
             const auto names = graph_window_->graph_names();
             for (size_t i = 0; i < names.size(); ++i) {
-                if (ImGui::MenuItem(names[i].c_str())) {
-                    graph_window_->add_signal(i, IFACE, 0, *ctx_name_, 0.0, 0.0);
-                    ctx_name_.reset();
+                if (ImGui::BeginMenu(names[i].c_str())) {
+                    for (int a = 0; a < 3; ++a) {
+                        const char* lbl[] = { "Y1", "Y2", "Y3" };
+                        if (ImGui::MenuItem(lbl[a])) {
+                            graph_window_->add_signal(i, IFACE, 0, *ctx_name_, 0.0, 0.0, a);
+                            ctx_name_.reset();
+                        }
+                    }
+                    ImGui::EndMenu();
                 }
             }
             if (!names.empty())
                 ImGui::Separator();
-            if (ImGui::MenuItem("+ New Graph")) {
-                const size_t idx = graph_window_->add_graph();
-                graph_window_->add_signal(idx, IFACE, 0, *ctx_name_, 0.0, 0.0);
-                ctx_name_.reset();
+            if (ImGui::BeginMenu("+ New Graph")) {
+                for (int a = 0; a < 3; ++a) {
+                    const char* lbl[] = { "Y1", "Y2", "Y3" };
+                    if (ImGui::MenuItem(lbl[a])) {
+                        const size_t idx = graph_window_->add_graph();
+                        graph_window_->add_signal(idx, IFACE, 0, *ctx_name_, 0.0, 0.0, a);
+                        ctx_name_.reset();
+                    }
+                }
+                ImGui::EndMenu();
             }
         }
         ImGui::EndPopup();

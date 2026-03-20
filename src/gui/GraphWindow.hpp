@@ -28,7 +28,8 @@ public:
                       uint32_t           msg_id,
                       const std::string& signal_name,
                       double             y_min,
-                      double             y_max);
+                      double             y_max,
+                      int                y_axis = 0); // 0=Y1, 1=Y2, 2=Y3
     std::vector<std::string> graph_names() const;
 
 private:
@@ -36,8 +37,9 @@ private:
         std::string interface;
         uint32_t    msg_id;
         std::string signal_name;
-        double      y_min = 0.0;
-        double      y_max = 0.0;
+        double      y_min  = 0.0;
+        double      y_max  = 0.0;
+        int         y_axis = 0;   // 0=Y1, 1=Y2, 2=Y3
 
         static constexpr size_t MAX = 10000;
         std::vector<double> xs;
@@ -56,10 +58,21 @@ private:
     struct GraphTab {
         std::string               name;
         std::vector<SignalSeries> series;
-        bool                      follow = true;
+        bool                      follow  = true;
+        double                    x_range = 30.0; // visible X window width in seconds
+    };
+
+    struct PendingSeriesCtx {
+        size_t      tab_idx;
+        size_t      series_idx;
+        std::string signal_name;
+        int         current_axis;
     };
 
     std::vector<GraphTab>                  graphs_;
     mutable std::mutex                     mutex_;
     std::chrono::steady_clock::time_point  start_;
+
+    std::optional<PendingSeriesCtx>        pending_series_ctx_;
+    bool                                   open_series_ctx_ = false;
 };
