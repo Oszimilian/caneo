@@ -1,0 +1,24 @@
+- type: periodic                                                                                                                                                                                                                            
+  msg: SS_ELMO_CONFIG                                                                                                                                                                                                                          
+  period_ms: 100                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    SS_ELMO_STATUS_LWS_MAX: 13000
+    SS_ELMO_STATUS_LWS_MIN: 3000
+    SS_ELMO_STATUS_LWS_MIDDLE: 6000
+    SS_ELMO_CONFIG_VALID: 1  
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: SS_ELMO_STATE                                                                                                                                                                                                                          
+  period_ms: 100                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    SS_ELMO_RUN: 1                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                              
+- type: sin                                                                                                                                                                                                                                 
+  msg: SS_ELMO_TARGET                                                                                                                                                                                                                          
+  signal: SS_ELMO_TARGET_LWS                                                                                                                                                                                                                        
+  amplitude: 2000.0                                                                                                                                                                                                                         
+  offset: 6000.0                                          
+  sin_period_ms: 2000                                                                                                                                                                                                                       
+  interval_ms: 10                                                                                                                                                                                                                           
+#  signals:           # optional: other signals set to fixed values                                                                                                                                                                          
+#    OtherSignal: 1.0

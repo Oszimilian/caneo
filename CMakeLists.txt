@@ -40,6 +40,7 @@ add_executable(caneo
     src/send/SendModel.cpp
     src/action/Action.cpp
     src/action/ActionHandler.cpp
+    src/action/ActionPreset.cpp
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
     src/logger/McapLogger.cpp

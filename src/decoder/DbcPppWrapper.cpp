@@ -41,9 +41,25 @@ void DbcPppWrapper::decode(CanFrame& frame) {
         if (y_min == 0.0 && y_max == 0.0)
             y_max = std::pow(2.0, static_cast<double>(sig.BitSize()));
 
+        double phys = sig.RawToPhys(sig.Decode(raw));
+
+        // Some DBC files declare a signal as signed ('-') but define a non-negative
+        // physical range (e.g. [0|16383]).  When raw values have the sign-bit set
+        // dbcppp correctly sign-extends them, producing negative physical values that
+        // contradict the declared range.  Detect this and re-interpret the raw bits
+        // as unsigned so the value lands in [dbc_min, dbc_max].
+        if (phys < y_min && y_min >= 0.0 && y_max > y_min) {
+            const auto     raw_bits = static_cast<uint64_t>(sig.Decode(raw));
+            const uint64_t mask     = (sig.BitSize() < 64)
+                                      ? ((uint64_t{1} << sig.BitSize()) - 1u)
+                                      : ~uint64_t{0};
+            phys = static_cast<double>(raw_bits & mask)
+                   * sig.Factor() + sig.Offset();
+        }
+
         frame.addDecoded(DecodedSignal{
             .name    = std::string(sig.Name()),
-            .value   = sig.RawToPhys(sig.Decode(raw)),
+            .value   = phys,
             .unit    = std::string(sig.Unit()),
             .min_val = y_min,
             .max_val = y_max,

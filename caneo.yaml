@@ -1,6 +1,7 @@
 virtual: false
 log_file_path: ~/Dokumente/Logs
 interfaces:
-  can0: 
+  can0:
     dbc: dbc/vcan0.dbc
     baudrate: 1000000
+    actions: actions/ss_elmo_actions.yaml

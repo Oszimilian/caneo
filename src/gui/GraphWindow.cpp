@@ -130,12 +130,14 @@ void GraphWindow::render()
                      ImGui::IsMouseDragging(ImGuiMouseButton_Right)))
                     tab.follow = false;
 
+                ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 3.0f);
                 for (auto& s : tab.series) {
                     if (s.xs.empty())
                         continue;
                     ImPlot::PlotLine(s.signal_name.c_str(),
                                      s.xs.data(), s.ys.data(),
                                      static_cast<int>(s.xs.size()));
+                    ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 3.0f);
                 }
                 ImPlot::EndPlot();
             }

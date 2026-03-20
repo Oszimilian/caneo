@@ -2,6 +2,7 @@
 #include "log_frame.hpp"
 
 #include "action/ActionHandler.hpp"
+#include "action/ActionPreset.hpp"
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
 #include "gui/Gui.hpp"
@@ -32,6 +33,11 @@ void run_gui(const AppConfig& app)
     };
 
     ActionHandler action_handler(io, send_fn);
+
+    // Load per-interface action presets (all start paused)
+    for (const auto& cfg : app.config.interfaces)
+        load_action_presets(cfg, action_handler);
+
     auto gui = std::make_shared<Gui>(app.config.interfaces, action_handler);
 
     ProtoLogRegistry proto_registry;

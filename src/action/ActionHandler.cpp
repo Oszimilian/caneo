@@ -20,6 +20,18 @@ void ActionHandler::add_action(std::unique_ptr<Action> action) {
     });
 }
 
+void ActionHandler::add_action_paused(std::unique_ptr<Action> action) {
+    boost::asio::post(io_, [this, a = std::move(action)]() mutable {
+        auto* ptr = a.get();
+        actions_.push_back(std::move(a));
+        actions_.back()->start(
+            [this]      { on_action_fired(); },
+            [this, ptr] { on_action_done(ptr); });
+        actions_.back()->pause();  // cancel timer immediately → starts paused
+        rebuild_snapshot();
+    });
+}
+
 void ActionHandler::remove_action(std::size_t idx) {
     boost::asio::post(io_, [this, idx] {
         if (idx >= actions_.size()) return;

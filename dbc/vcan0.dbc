@@ -338,7 +338,7 @@ BO_ 410 ES420_2_Vehicle: 8 Hauptsteuereinheit
  SG_ ES420_CH1 : 0|32@1- (0.01,0) [0|0] "" Vector__XXX
 
 BO_ 393 RFC4800_LWS: 4 RFC4800_LWS
- SG_ LWS_Sensor : 0|14@1- (1,0) [0|16383] "" Vector__XXX
+ SG_ LWS_Sensor : 0|14@1+ (1,0) [0|16383] "" Vector__XXX
 
 BO_ 406 DCU_2_mABX: 3 DCU
  SG_ DCU_RESERVE_BUTTON : 16|1@1+ (1,0) [0|1] "" Vector__XXX

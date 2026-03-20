@@ -42,6 +42,8 @@ static Config parse_config(const YAML::Node& root) {
                     cfg.dbc = entry.second["dbc"].as<std::string>();
                 if (entry.second["baudrate"])
                     cfg.baudrate = entry.second["baudrate"].as<uint32_t>();
+                if (entry.second["actions"])
+                    cfg.actions_file = entry.second["actions"].as<std::string>();
             }
         }
         result.interfaces.push_back(std::move(cfg));

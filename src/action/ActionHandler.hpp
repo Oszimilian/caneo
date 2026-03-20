@@ -33,6 +33,7 @@ public:
 
     // Thread-safe: callable from any thread
     void add_action(std::unique_ptr<Action> action);
+    void add_action_paused(std::unique_ptr<Action> action); // starts already paused
     void remove_action(std::size_t idx);
     void toggle_pause(std::size_t idx);
     void update_sin_param(std::size_t idx, int param, double value); // param: 0=amplitude 1=period 2=offset
