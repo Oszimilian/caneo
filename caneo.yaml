@@ -1,6 +1,6 @@
-virtual: true
+virtual: false
 log_file_path: ~/Dokumente/Logs
 interfaces:
-  vcan0: 
+  can0: 
     dbc: dbc/vcan0.dbc
     baudrate: 1000000

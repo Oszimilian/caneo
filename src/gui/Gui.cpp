@@ -21,8 +21,11 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
         windows_.push_back(std::make_unique<TraceWindow>(cfg.name, *gw));
 
     windows_.push_back(std::move(graph_window));
-    windows_.push_back(std::make_unique<SendWindow>(iface_configs, action_handler));
-    windows_.push_back(std::make_unique<ActionsWindow>(action_handler));
+
+    auto send_window = std::make_unique<SendWindow>(iface_configs, action_handler);
+    SendWindow* sw   = send_window.get();
+    windows_.push_back(std::move(send_window));
+    windows_.push_back(std::make_unique<ActionsWindow>(action_handler, *sw));
 }
 
 void Gui::update(const CanFrame& frame)
@@ -39,8 +42,9 @@ void Gui::run()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "caneo", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(3840, 2160, "caneo", nullptr, nullptr);
     if (!window) {
         glfwTerminate();
         return;
@@ -54,7 +58,7 @@ void Gui::run()
     ImPlot::CreateContext();
 
     ImGuiIO& io = ImGui::GetIO();
-    io.FontGlobalScale = 2.0f;
+    io.FontGlobalScale = 2.5f;
 
     ImGui::StyleColorsLight();
     ImPlot::StyleColorsLight();
@@ -76,7 +80,7 @@ void Gui::run()
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);
         glViewport(0, 0, w, h);
-        glClearColor(0.94f, 0.94f, 0.94f, 1.0f);
+        glClearColor(0.82f, 0.82f, 0.82f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
