@@ -30,6 +30,27 @@ void GraphWindow::update(const CanFrame& frame)
     }
 }
 
+void GraphWindow::push_value(const std::string& interface,
+                             const std::string& signal_name,
+                             double             value)
+{
+    const double t = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start_).count();
+
+    std::lock_guard lock(mutex_);
+    for (auto& tab : graphs_) {
+        for (auto& s : tab.series) {
+            if (s.interface == interface &&
+                s.msg_id    == 0         &&
+                s.signal_name == signal_name)
+            {
+                s.push(t, value);
+                break;
+            }
+        }
+    }
+}
+
 size_t GraphWindow::add_graph()
 {
     std::lock_guard lock(mutex_);

@@ -2,6 +2,7 @@
 
 #include "ActionsWindow.hpp"
 #include "GraphWindow.hpp"
+#include "ModelWindow.hpp"
 #include "SendWindow.hpp"
 #include "TraceWindow.hpp"
 
@@ -15,10 +16,10 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
          ActionHandler& action_handler)
 {
     auto graph_window = std::make_unique<GraphWindow>();
-    GraphWindow* gw = graph_window.get();
+    graph_window_ = graph_window.get();
 
     for (const auto& cfg : iface_configs)
-        windows_.push_back(std::make_unique<TraceWindow>(cfg.name, *gw));
+        windows_.push_back(std::make_unique<TraceWindow>(cfg.name, *graph_window_));
 
     windows_.push_back(std::move(graph_window));
 
@@ -26,6 +27,14 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
     SendWindow* sw   = send_window.get();
     windows_.push_back(std::move(send_window));
     windows_.push_back(std::make_unique<ActionsWindow>(action_handler, *sw));
+}
+
+ModelWindow* Gui::add_model_window()
+{
+    auto mw = std::make_unique<ModelWindow>(*graph_window_);
+    auto* ptr = mw.get();
+    windows_.push_back(std::move(mw));
+    return ptr;
 }
 
 void Gui::update(const CanFrame& frame)

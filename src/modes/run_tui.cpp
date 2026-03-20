@@ -2,6 +2,7 @@
 #include "log_frame.hpp"
 
 #include "action/ActionHandler.hpp"
+#include "action/ActionPreset.hpp"
 #include "compat/print.hpp"
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
@@ -33,6 +34,11 @@ void run_tui(const AppConfig& app) {
     };
 
     ActionHandler action_handler(io, send_fn);
+
+    // Load per-interface action presets (all start paused)
+    for (const auto& cfg : app.config.interfaces)
+        load_action_presets(cfg, action_handler);
+
     auto tui = std::make_shared<TuiDataFrameSet>(app.config.interfaces, action_handler);
 
     ProtoLogRegistry proto_registry;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GraphWindow.hpp"
 #include "Window.hpp"
 #include "action/ActionHandler.hpp"
 #include "config/Config.hpp"
@@ -7,6 +8,8 @@
 
 #include <memory>
 #include <vector>
+
+class ModelWindow;
 
 class Gui {
 public:
@@ -19,6 +22,11 @@ public:
     // Blocks until window is closed; call from main thread.
     void run();
 
+    // Creates a ModelWindow, adds it to the render loop, returns the raw pointer.
+    // Must be called before run(). The window is owned by Gui.
+    ModelWindow* add_model_window();
+
 private:
+    GraphWindow*                         graph_window_ = nullptr;
     std::vector<std::unique_ptr<Window>> windows_;
 };

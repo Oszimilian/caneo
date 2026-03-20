@@ -56,8 +56,6 @@ void ModelEngine::on_frame(const CanFrame& frame) {
         return;
     }
 
-    if (!logger_) return;
-
     const std::string base = "model/" + script_name_ + "/";
     const sol::object ret  = result[0];
 
@@ -67,11 +65,17 @@ void ModelEngine::on_frame(const CanFrame& frame) {
         t.for_each([&](const sol::object& key, const sol::object& val) {
             if (!key.is<std::string>()) return;
             const auto v = to_double(val);
-            if (v) logger_->log_scalar(base + key.as<std::string>(), *v);
+            if (!v) return;
+            const std::string name = key.as<std::string>();
+            if (logger_)    logger_->log_scalar(base + name, *v);
+            if (output_cb_) output_cb_(name, *v);
         });
     } else {
         // Single numeric output
         const auto v = to_double(ret);
-        if (v) logger_->log_scalar(base + "output", *v);
+        if (v) {
+            if (logger_)    logger_->log_scalar(base + "output", *v);
+            if (output_cb_) output_cb_("output", *v);
+        }
     }
 }

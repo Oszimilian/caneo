@@ -12,6 +12,13 @@ public:
     GraphWindow();
 
     void update(const CanFrame& frame) override;
+
+    // Thread-safe: push a value directly (for non-CAN sources like model outputs).
+    // Uses "interface" + msg_id=0 as the series key.
+    void push_value(const std::string& interface,
+                    const std::string& signal_name,
+                    double             value);
+
     void render() override;
 
     // Called from render thread only:

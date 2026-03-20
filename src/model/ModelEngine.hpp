@@ -4,6 +4,7 @@
 #include "logger/Logger.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -39,11 +40,17 @@ public:
 
     const std::string& script_name() const { return script_name_; }
 
+    // Optional callback invoked for each named output on the asio thread.
+    // Signature: void(const std::string& name, double value)
+    using OutputCallback = std::function<void(const std::string&, double)>;
+    void set_output_callback(OutputCallback cb) { output_cb_ = std::move(cb); }
+
 private:
     void dispatch_outputs(const sol::state& lua, int n_results);
 
     std::unique_ptr<sol::state> lua_;
     SignalStore&                store_;
     Logger*                     logger_;
+    OutputCallback              output_cb_;
     std::string                 script_name_;
 };

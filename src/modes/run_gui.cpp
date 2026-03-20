@@ -3,6 +3,7 @@
 
 #include "action/ActionHandler.hpp"
 #include "action/ActionPreset.hpp"
+#include "gui/ModelWindow.hpp"
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
 #include "gui/Gui.hpp"
@@ -52,8 +53,13 @@ void run_gui(const AppConfig& app)
     FrameTimestampMap last_frame_ts;
     SignalStore       signal_store;
     std::unique_ptr<ModelEngine> model_engine;
-    if (!app.model_path.empty())
+    if (!app.model_path.empty()) {
         model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
+        auto* mw = gui->add_model_window();
+        model_engine->set_output_callback([mw](const std::string& name, double value) {
+            mw->push(name, value);
+        });
+    }
 
     for (const auto& cfg : app.config.interfaces) {
         if (!cfg.dbc.empty())

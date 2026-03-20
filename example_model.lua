@@ -11,5 +11,6 @@ function run()
 
     return {
         error = error,
+        value = brake + 2000
     }
 end

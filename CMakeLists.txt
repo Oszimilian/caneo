@@ -31,6 +31,7 @@ add_executable(caneo
     src/gui/TuiDataFrameSet.cpp
     src/gui/Gui.cpp
     src/gui/GraphWindow.cpp
+    src/gui/ModelWindow.cpp
     src/gui/TraceWindow.cpp
     src/gui/SendWindow.cpp
     src/gui/ActionsWindow.cpp
