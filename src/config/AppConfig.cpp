@@ -7,6 +7,7 @@
 #include <vector>
 
 DEFINE_bool(tui,      false, "Enable TUI mode");
+DEFINE_bool(gui,      false, "Enable GUI mode (Dear ImGui)");
 DEFINE_bool(log,      false, "Enable logging to MCAP file");
 DEFINE_bool(debug,    false, "Enable debug output");
 DEFINE_string(config,   "", "Path to caneo.yaml config file");
@@ -20,6 +21,7 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
 
     AppConfig app;
     app.tui_mode      = FLAGS_tui;
+    app.gui_mode      = FLAGS_gui;
     app.log_mode      = FLAGS_log;
     app.debug_mode    = FLAGS_debug;
     app.model_path    = FLAGS_model;

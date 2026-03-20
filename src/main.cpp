@@ -1,6 +1,7 @@
 #include "config/AppConfig.hpp"
 #include "compat/print.hpp"
 #include "logger/McapReader.hpp"
+#include "modes/run_gui.hpp"
 #include "modes/run_live.hpp"
 #include "modes/run_playback.hpp"
 #include "modes/run_tui.hpp"
@@ -41,6 +42,7 @@ int main(int argc, char* argv[]) {
     try {
         if (!app.playback_path.empty()) run_playback(app);
         else if (app.tui_mode)          run_tui(app);
+        else if (app.gui_mode)          run_gui(app);
         else                            run_live(app);
     } catch (const std::exception& e) {
         std::println(stderr, "Error: {}", e.what());

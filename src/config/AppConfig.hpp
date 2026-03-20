@@ -5,6 +5,7 @@
 
 struct AppConfig {
     bool        tui_mode      = false;
+    bool        gui_mode      = false;
     bool        log_mode      = false;
     bool        debug_mode    = false;
     std::string model_path;

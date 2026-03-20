@@ -47,10 +47,12 @@ conan profile detect
 
 Then build the project:
 ```bash
-conan install . --output-folder=build --build=missing
+conan install . --output-folder=build --build=missing -c tools.system.package_manager:mode=install
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+> **Note:** The `-c tools.system.package_manager:mode=install` flag is required because `glfw` depends on `xorg/system`, which needs X11 dev packages to be installed automatically.
 
 Debug
 ```bash

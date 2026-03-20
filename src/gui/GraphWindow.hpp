@@ -1,0 +1,58 @@
+#pragma once
+
+#include "Window.hpp"
+
+#include <chrono>
+#include <mutex>
+#include <string>
+#include <vector>
+
+class GraphWindow : public Window {
+public:
+    GraphWindow();
+
+    void update(const CanFrame& frame) override;
+    void render() override;
+
+    // Called from render thread only:
+    size_t add_graph();
+    void   add_signal(size_t graph_idx,
+                      const std::string& interface,
+                      uint32_t           msg_id,
+                      const std::string& signal_name,
+                      double             y_min,
+                      double             y_max);
+    std::vector<std::string> graph_names() const;
+
+private:
+    struct SignalSeries {
+        std::string interface;
+        uint32_t    msg_id;
+        std::string signal_name;
+        double      y_min = 0.0;
+        double      y_max = 0.0;
+
+        static constexpr size_t MAX = 10000;
+        std::vector<double> xs;
+        std::vector<double> ys;
+
+        void push(double t, double v) {
+            xs.push_back(t);
+            ys.push_back(v);
+            if (xs.size() > MAX) {
+                xs.erase(xs.begin());
+                ys.erase(ys.begin());
+            }
+        }
+    };
+
+    struct GraphTab {
+        std::string               name;
+        std::vector<SignalSeries> series;
+        bool                      follow = true;
+    };
+
+    std::vector<GraphTab>                  graphs_;
+    mutable std::mutex                     mutex_;
+    std::chrono::steady_clock::time_point  start_;
+};

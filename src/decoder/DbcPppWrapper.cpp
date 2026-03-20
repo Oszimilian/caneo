@@ -1,5 +1,6 @@
 #include "DbcPppWrapper.hpp"
 
+#include <cmath>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -35,10 +36,17 @@ void DbcPppWrapper::decode(CanFrame& frame) {
             (!mux_sig || mux_sig->Decode(raw) != sig.MultiplexerSwitchValue())) {
             continue;
         }
+        double y_min = sig.Minimum();
+        double y_max = sig.Maximum();
+        if (y_min == 0.0 && y_max == 0.0)
+            y_max = std::pow(2.0, static_cast<double>(sig.BitSize()));
+
         frame.addDecoded(DecodedSignal{
-            .name  = std::string(sig.Name()),
-            .value = sig.RawToPhys(sig.Decode(raw)),
-            .unit  = std::string(sig.Unit()),
+            .name    = std::string(sig.Name()),
+            .value   = sig.RawToPhys(sig.Decode(raw)),
+            .unit    = std::string(sig.Unit()),
+            .min_val = y_min,
+            .max_val = y_max,
         });
     }
 }

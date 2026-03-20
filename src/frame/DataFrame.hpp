@@ -10,8 +10,10 @@
 
 struct DecodedSignal {
     std::string name;
-    double value;
+    double      value;
     std::string unit;
+    double      min_val = 0.0;
+    double      max_val = 0.0;
 };
 
 class DataFrame {
