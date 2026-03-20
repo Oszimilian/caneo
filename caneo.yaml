@@ -5,3 +5,7 @@ interfaces:
     dbc: dbc/vcan0.dbc
     baudrate: 1000000
     actions: actions/ss_elmo_actions.yaml
+
+  can1:
+    dbc: dbc/vcan1.dbc
+    baudrate: 1000000

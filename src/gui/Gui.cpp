@@ -10,7 +10,10 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_internal.h>
 #include <implot.h>
+
+#include <cstring>
 
 Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
          ActionHandler& action_handler)
@@ -53,7 +56,14 @@ void Gui::run()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
-    GLFWwindow* window = glfwCreateWindow(3840, 2160, "caneo", nullptr, nullptr);
+    // Use primary monitor resolution as initial window size so GLFW has a
+    // sensible fallback even before the maximise hint takes effect.
+    GLFWmonitor*       primary   = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode      = primary ? glfwGetVideoMode(primary) : nullptr;
+    int                init_w    = mode ? mode->width  : 1280;
+    int                init_h    = mode ? mode->height : 720;
+
+    GLFWwindow* window = glfwCreateWindow(init_w, init_h, "caneo", nullptr, nullptr);
     if (!window) {
         glfwTerminate();
         return;
@@ -66,8 +76,32 @@ void Gui::run()
     ImGui::CreateContext();
     ImPlot::CreateContext();
 
+    // --- Custom ini handler: persists [caneo] section with FontGlobalScale ---
+    static float s_font_scale = 1.0f;
+
+    ImGuiSettingsHandler caneo_handler{};
+    caneo_handler.TypeName   = "caneo";
+    caneo_handler.TypeHash   = ImHashStr("caneo");
+    caneo_handler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char*) -> void* {
+        return (void*)1; // any non-null = "I handle this entry"
+    };
+    caneo_handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line) {
+        float v{};
+        if (std::sscanf(line, "FontGlobalScale=%f", &v) == 1)
+            s_font_scale = v;
+    };
+    caneo_handler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
+        buf->appendf("[%s][settings]\n", handler->TypeName);
+        buf->appendf("FontGlobalScale=%.2f\n\n", ImGui::GetIO().FontGlobalScale);
+    };
+    ImGui::AddSettingsHandler(&caneo_handler);
+
     ImGuiIO& io = ImGui::GetIO();
-    io.FontGlobalScale = 2.5f;
+    io.IniFilename = "imgui.ini"; // ensure file is loaded/saved
+
+    // Load ini now so the handler above can populate s_font_scale before we use it.
+    ImGui::LoadIniSettingsFromDisk(io.IniFilename);
+    io.FontGlobalScale = s_font_scale;
 
     ImGui::StyleColorsLight();
     ImPlot::StyleColorsLight();

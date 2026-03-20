@@ -1,0 +1,194 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_:
+
+
+BO_ 3221225472 VECTOR__INDEPENDENT_SIG_MSG: 0 Vector__XXX
+ SG_ EBS_state_triggered : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ EBS_state_deactivated : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ EBS_state_available : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ ASSI_state_ebs_triggered : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ ASSI_state_ready : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ ASSI_state_off : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ ASSI_state_finish : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ ASSI_state_driving : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ AMI_state_trackdrive : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ AMI_state_braketest : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ AMI_state_skidpad : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ AMI_state_acceleration : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ BrakePressure : 0|8@1- (1,0) [0|0] "bar" Vector__XXX
+
+BO_ 0 NMT_Start: 2 Vector__XXX
+ SG_ Startup_ID : 8|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ NMT_StartSignal : 0|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1297 ASF_Signals: 7 Vector__XXX
+ SG_ DV_Mission : 41|3@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ EmergencyOK : 40|1@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Brake_hydr_target : 32|8@1+ (1,0) [0|0] "%" Vector__XXX
+ SG_ Brake_hydr_actual_rear : 24|8@1+ (1,0) [0|0] "bar" Vector__XXX
+ SG_ Brake_hydr_actual_front : 16|8@1+ (1,0) [0|0] "bar" Vector__XXX
+ SG_ AirPressure_tank : 8|8@1+ (1,0) [0|0] "bar" Vector__XXX
+ SG_ AirPressure_system : 0|8@1+ (1,0) [0|0] "bar" Vector__XXX
+
+BO_ 401 GrossFunk: 8 Vector__XXX
+ SG_ Switch : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Radio_Quality : 48|8@1- (1,0) [0|0] "" Vector__XXX
+ SG_ push_button : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ pre_alarm : 62|1@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ EmergencyOK : 0|1@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1282 DV_system_status: 5 Vector__XXX
+ SG_ Cones_count_actual : 15|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Cones_count_all : 23|17@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ steering_state : 8|1@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Service_brake_state : 9|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Lap_counter : 11|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ EBS_state : 3|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ AS_state : 0|3@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ AMI_state : 5|3@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 1281 DV_driving_dynamics_2: 6 Vector__XXX
+ SG_ Yaw_rate : 32|16@1- (0.0078125,0) [0|0] "deg/s" Vector__XXX
+ SG_ Acceleration_longitudinal : 0|16@1- (0.001953125,0) [0|0] "m/s^2" Vector__XXX
+ SG_ Acceleration_lateral : 16|16@1- (0.001953125,0) [0|0] "m/s^2" Vector__XXX
+
+BO_ 1280 DV_driving_dynamics_1: 8 Vector__XXX
+ SG_ Brake_hydr_target : 40|8@1+ (1,0) [0|0] "bar" Vector__XXX
+ SG_ Brake_hydr_actual : 32|8@1+ (1,0) [0|0] "bar" Vector__XXX
+ SG_ Steering_angle_target : 24|8@1- (0.5,0) [0|0] "deg" Vector__XXX
+ SG_ Steering_angle_actual : 16|8@1- (0.5,0) [0|0] "deg" Vector__XXX
+ SG_ Speed_target : 8|8@1+ (1,0) [0|0] "km/h" Vector__XXX
+ SG_ Speed_actual : 0|8@1+ (1,0) [0|0] "km/h" Vector__XXX
+ SG_ Motor_moment_target : 56|8@1- (1,0) [0|0] "%" Vector__XXX
+ SG_ Motor_moment_actual : 48|8@1- (1,0) [0|0] "%" Vector__XXX
+
+BO_ 1072 FS_Datalogger_Status: 6 FS_Datalogger
+ SG_ Current : 32|16@1+ (64,0) [0|4194240] "mA" Vector__XXX
+ SG_ Voltage : 16|16@1+ (16,0) [0|1048560] "mV" Vector__XXX
+ SG_ Status_Triggered_Current : 11|1@1- (1,0) [0|0] "" Vector__XXX
+ SG_ Status_Triggered_Voltage : 10|1@1- (1,0) [0|0] "" Vector__XXX
+ SG_ Status_Logging : 9|1@1- (1,0) [0|0] "" Vector__XXX
+ SG_ Status_Ready : 8|1@1- (1,0) [0|0] "" Vector__XXX
+ SG_ MsgCnt : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2016 Vel_Angle: 8 SFMotion
+ SG_ Angle : 48|16@1- (0.01,0) [-45|45] "°"  SFMotion
+ SG_ VelY : 16|16@1- (0.036,0) [-100|100] "km/h"  SFMotion
+ SG_ VelX : 0|16@1- (0.036,0) [-400|400] "km/h"  SFMotion
+ SG_ Vel : 32|16@1- (0.036,0) [-400|400] "km/h"  SFMotion
+
+BO_ 2024 Status: 8 SFMotion
+ SG_ DirectionMounting : 50|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ DirectionMotion : 49|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ DirectionHeadIsValid : 51|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ AngVelCorrection : 48|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ Direction : 47|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ AngleSwitchedOff : 46|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ HeadStatus : 44|2@1+ (1,0) [0|3] ""  SFMotion
+ SG_ TemperatureOK : 43|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ LampCurrentControl : 42|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ STST : 40|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ FilterSetting : 32|8@1+ (1,0) [0|255] ""  SFMotion
+ SG_ FilterOffOn : 41|1@1+ (1,0) [0|1] ""  SFMotion
+ SG_ LampCurrent : 24|8@1+ (0.01,0) [0|2.55] "A"  SFMotion
+ SG_ Temperature : 16|8@1- (1,0) [-128|127] "°C"  SFMotion
+ SG_ SensorID : 0|16@1+ (1,0) [0|9999] ""  SFMotion
+ SG_ DirectionHead : 52|1@1+ (1,0) [0|1] ""  SFMotion
+
+BO_ 2018 Pitch_Roll: 8 SFMotion
+ SG_ Radius : 48|16@1+ (0.01,0) [0|655.35] "m"  SFMotion
+ SG_ Timestamp : 32|16@1+ (1,0) [0|65535] ""  SFMotion
+ SG_ Roll : 16|16@1- (0.01,0) [-45|45] "°"  SFMotion
+ SG_ Pitch : 0|16@1- (0.01,0) [-45|45] "°"  SFMotion
+
+BO_ 2017 Distance: 8 SFMotion
+ SG_ Distance : 0|32@1- (0.001,0) [-2147480|2147480] "m"  SFMotion
+
+BO_ 2021 Correvit: 8 SFMotion
+ SG_ Angle_cor : 48|16@1- (0.01,0) [-45|45] "°"  SFMotion
+ SG_ VelY_cor : 16|16@1- (0.036,0) [-100|100] "km/h"  SFMotion
+ SG_ Vel_cor : 32|16@1- (0.036,0) [-400|400] "km/h"  SFMotion
+ SG_ VelX_cor : 0|16@1- (0.036,0) [-400|400] "km/h"  SFMotion
+
+BO_ 2020 AngVelHor: 8 SFMotion
+ SG_ AngVelZ_hor : 32|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+ SG_ AngVelY_hor : 16|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+ SG_ AngVelX_hor : 0|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+
+BO_ 2023 AngVelBody: 8 SFMotion
+ SG_ AngVelZ_body : 32|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+ SG_ AngVelY_body : 16|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+ SG_ AngVelX_body : 0|16@1- (0.02,0) [-300|300] "°/s"  SFMotion
+
+BO_ 2019 AccHor_AccCBody: 8 SFMotion
+ SG_ AccC_body : 48|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+ SG_ AccZ_hor : 32|16@1- (0.01,0) [-180|180] ""  SFMotion
+ SG_ AccY_hor : 16|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+ SG_ AccX_hor : 0|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+
+BO_ 2022 AccBody: 8 SFMotion
+ SG_ AccZ_body : 32|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+ SG_ AccY_body : 16|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+ SG_ AccX_body : 0|16@1- (0.01,0) [-180|180] "m/s²"  SFMotion
+
+BO_ 2044 SFrace_Info: 8 SFrace
+ SG_ FilterSetting : 57|7@1+ (1,0) [0|127] ""  SFrace
+ SG_ FilterType : 56|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ PowerOK : 55|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ CurrentRegOnOff : 54|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ BusOff : 52|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ TempOK : 51|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ SensorOK : 50|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ FilerON : 49|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ StSt : 48|1@1+ (1,0) [0|1] ""  SFrace
+ SG_ CurrLED : 40|8@1+ (0.01,0) [0|2.55] "A"  SFrace
+ SG_ TempSens : 32|8@1- (1,0) [-128|127] "°C"  SFrace
+ SG_ SerialNo : 0|32@1+ (1,0) [0|0] ""  SFrace
+
+BO_ 2043 SFrace_Data2: 6 SFrace
+ SG_ Angle : 32|16@1- (0.01,0) [-45|45] "°"  SFrace
+ SG_ VelY : 16|16@1- (0.036,0) [-100|100] "km/h"  SFrace
+ SG_ VelX : 0|16@1+ (0.036,0) [0|400] "km/h"  SFrace
+
+BO_ 2042 SFrace_Data1: 8 SFrace
+ SG_ Dist : 32|32@1+ (0.001,0) [0|4294970] "m"  SFrace
+ SG_ Vel : 16|16@1+ (0.036,0) [0|400] "km/h"  SFrace
+ SG_ Timestamp : 0|16@1+ (1,0) [0|65535] ""  SFrace
+
+CM_ BO_ 3221225472 "This is a message for not used signals, created by Vector CANdb++ DBC OLE DB Provider.";
+BA_DEF_  "BusType" STRING ;
+BA_DEF_DEF_  "BusType" "CAN";
