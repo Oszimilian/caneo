@@ -16,6 +16,7 @@
 #include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
 #include "socket/SocketGrpc.hpp"
+#include <algorithm>
 
 #include <boost/asio.hpp>
 #include <map>
@@ -89,8 +90,24 @@ void run_tui(const AppConfig& app) {
         socket->start();
     }
 
+    if (!app.grpc_client.empty()) {
+        std::vector<SocketGrpc*> grpc_sockets;
+        for (auto& s : sockets)
+            if (auto* gs = dynamic_cast<SocketGrpc*>(s.get()))
+                grpc_sockets.push_back(gs);
+        if (!grpc_sockets.empty()) {
+            tui->set_status_indicator(app.grpc_client, [grpc_sockets]() {
+                return std::any_of(grpc_sockets.begin(), grpc_sockets.end(),
+                                   [](SocketGrpc* s) { return s->connected(); });
+            });
+        }
+    }
+
+    // Keep io.run() alive even when no async CAN reads are pending (e.g. grpc_client mode).
+    auto work_guard = boost::asio::make_work_guard(io);
     std::thread asio_thread([&io] { io.run(); });
     tui->run();
+    work_guard.reset();
     io.stop();
     asio_thread.join();
     logger.reset();
