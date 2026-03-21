@@ -1,5 +1,6 @@
 #pragma once
 
+#include "action/Action.hpp"
 #include "frame/CanFrame.hpp"
 #include "can_stream.grpc.pb.h"
 
@@ -19,9 +20,16 @@ public:
     // Signal all active Subscribe() calls to exit (called before server shutdown).
     void shutdown();
 
+    // Optional: called when a client sends a frame via the Send RPC.
+    void set_send_fn(SendFn fn) { send_fn_ = std::move(fn); }
+
     grpc::Status Subscribe(grpc::ServerContext* ctx,
                            const caneo::SubscribeRequest* req,
                            grpc::ServerWriter<caneo::RawCanFrame>* writer) override;
+
+    grpc::Status Send(grpc::ServerContext* ctx,
+                      const caneo::RawCanFrame* req,
+                      caneo::SendResult* result) override;
 
 private:
     struct Subscriber {
@@ -34,4 +42,5 @@ private:
 
     std::vector<std::shared_ptr<Subscriber>> subscribers_;
     std::mutex                               subs_mutex_;
+    SendFn                                   send_fn_;
 };

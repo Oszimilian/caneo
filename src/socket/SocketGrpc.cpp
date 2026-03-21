@@ -1,6 +1,7 @@
 #include "SocketGrpc.hpp"
 
 #include "frame/CanFrame.hpp"
+#include "compat/print.hpp"
 
 #include <chrono>
 #include <grpcpp/grpcpp.h>
@@ -18,6 +19,9 @@ SocketGrpc::~SocketGrpc() {
 
 void SocketGrpc::start() {
     running_ = true;
+
+    send_channel_ = grpc::CreateChannel(server_address_, grpc::InsecureChannelCredentials());
+    send_stub_    = caneo::CanStream::NewStub(send_channel_);
 
     reader_thread_ = std::thread([this]() {
         while (running_) {
@@ -71,6 +75,20 @@ void SocketGrpc::stop() {
         if (current_ctx_) current_ctx_->TryCancel();
     }
     if (reader_thread_.joinable()) reader_thread_.join();
+}
+
+void SocketGrpc::send(uint64_t id, const std::vector<uint8_t>& data) {
+    if (!send_stub_) return;
+    caneo::RawCanFrame frame;
+    frame.set_interface(interface_);
+    frame.set_can_id(static_cast<uint32_t>(id));
+    frame.set_dlc(static_cast<uint32_t>(data.size()));
+    frame.set_data(std::string(data.begin(), data.end()));
+    caneo::SendResult result;
+    grpc::ClientContext ctx;
+    const grpc::Status status = send_stub_->Send(&ctx, frame, &result);
+    if (!status.ok())
+        std::println(stderr, "SocketGrpc::send [{}] failed: {}", interface_, status.error_message());
 }
 
 std::ostream& operator<<(std::ostream& os, const SocketGrpc& s) {
