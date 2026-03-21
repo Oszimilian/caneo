@@ -27,6 +27,20 @@ classDiagram
         -asyncRead() void
     }
 
+    class SocketGrpc {
+        -io_ : io_context&
+        -interface_ : string
+        -server_address_ : string
+        -running_ : atomic~bool~
+        -connected_ : atomic~bool~
+        -send_stub_ : unique_ptr~CanStream::Stub~
+        +SocketGrpc(io, interface, server_address)
+        +start() void
+        +stop() void
+        +send(id, data) void
+        +connected() bool
+    }
+
     class DataFrame {
         <<abstract>>
         #payload_ : vector~uint8_t~
@@ -226,19 +240,46 @@ classDiagram
         -send_models_ : map~string, SendModel~
         -action_handler_ : ActionHandler&
         -sets_ : map~string, DataFrameSet~
+        -model_outputs_ : map~string, double~
         -mutex_ : mutex
         -nav_level_ : int
         -main_tab_ : int
         -screen_ : ScreenInteractive
         +update(frame: CanFrame) void
         +run() void
+        +enable_model_tab() void
+        +push_model_output(name, value) void
+        +set_status_indicator(label, fn) void
         -render() Element
         -render_trace() Element
         -render_send() Element
         -render_actions() Element
+        -render_model() Element
+    }
+
+    class CanStreamService {
+        -send_fn_ : SendFn
+        -subscribers_ : vector~Subscriber~
+        -subs_mutex_ : mutex
+        +broadcast(frame: CanFrame) void
+        +shutdown() void
+        +set_send_fn(fn: SendFn) void
+        +Subscribe(ctx, req, writer) Status
+        +Send(ctx, req, result) Status
+    }
+
+    class CanStreamServer {
+        -service_ : CanStreamService
+        -server_ : unique_ptr~Server~
+        -server_thread_ : thread
+        +CanStreamServer(port)
+        +broadcast(frame: CanFrame) void
+        +set_send_fn(fn: SendFn) void
     }
 
     Socket <|-- SocketCAN
+    Socket <|-- SocketGrpc
+    CanStreamServer *-- CanStreamService
     DataFrame <|-- CanFrame
     Decoder <|-- DbcPppWrapper
     DecoderRegistry o-- Decoder

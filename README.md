@@ -1,8 +1,10 @@
 # caneo
 
-A CAN bus visualization tool written in C++23.
+A CAN bus visualization and send tool written in C++23.
 
-See [Architecture](docs/architecture.md) for the class diagram.
+Supports live CAN bus monitoring, DBC decoding, signal sending, action scripting, Lua model evaluation, MCAP logging, and gRPC-based remote streaming.
+
+See [Architecture](docs/architecture.md) for the class diagram and detailed design notes.
 
 ## Requirements
 
@@ -98,3 +100,59 @@ cansend vcan0 123#DEADBEEF
 # Send frames continuously
 cangen vcan0
 ```
+
+## Modes
+
+| Flag | Description |
+|------|-------------|
+| *(none)* | CLI mode — print decoded frames to stdout |
+| `--tui` | Interactive terminal UI (trace, send, actions, model) |
+| `--gui` | Dear ImGui graphical UI |
+| `--playback <file.mcap>` | Replay a recorded MCAP file |
+
+## gRPC streaming
+
+caneo can stream raw CAN frames over gRPC, allowing a remote instance to receive and display frames as if they were local.
+
+**Server** — runs normally on real CAN hardware, additionally streams all frames to connected clients:
+```bash
+./build/caneo --grpc_server --tui
+./build/caneo --grpc_server --gui
+./build/caneo --grpc_server           # headless
+```
+
+**Client** — connects to a server and receives frames via gRPC instead of reading from SocketCAN:
+```bash
+./build/caneo --grpc_client=192.168.1.42:50051 --tui
+./build/caneo --grpc_client=192.168.1.42:50051 --gui
+```
+
+- The client does not require physical CAN hardware — `setup_interfaces` is skipped
+- Interface names in `caneo.yaml` are used as subscription filters
+- The client automatically reconnects if the server restarts
+- Sending frames from the client (via Send tab / Actions) transmits them back to the server, which puts them on the real CAN bus
+- A connection status indicator (● green/red) is shown in the top-right corner of both TUI and GUI
+
+Additional gRPC flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--grpc_port` | `50051` | Port the gRPC server listens on |
+
+## Lua model
+
+A Lua script can be run on every received frame to compute derived values:
+
+```bash
+./build/caneo --model path/to/script.lua vcan0:vcan0.dbc
+```
+
+The script must define a `run()` function that returns a number or a `{key=value}` table. Outputs are displayed in a dedicated **Model** tab in the TUI and as a separate window in the GUI.
+
+## Other flags
+
+| Flag | Description |
+|------|-------------|
+| `--log` | Write decoded frames to a timestamped MCAP file |
+| `--debug` | Print raw frame data to stdout (CLI mode) |
+| `--config <file>` | Load interface config from a YAML file instead of `caneo.yaml` |
