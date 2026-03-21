@@ -21,17 +21,22 @@ public:
     void stop() override;
 
     const std::string& interface() const { return interface_; }
+    const std::string& server_address() const { return server_address_; }
+    bool               connected() const { return connected_; }
 
     friend std::ostream& operator<<(std::ostream& os, const SocketGrpc& s);
 
 private:
-    boost::asio::io_context&                io_;
-    std::string                             interface_;
-    std::string                             server_address_;
-    std::atomic<bool>                       running_{false};
-    std::thread                             reader_thread_;
-    std::unique_ptr<grpc::ClientContext>    ctx_;
-    std::unique_ptr<caneo::CanStream::Stub> stub_;
+    boost::asio::io_context& io_;
+    std::string              interface_;
+    std::string              server_address_;
+    std::atomic<bool>        running_{false};
+    std::atomic<bool>        connected_{false};
+    std::thread              reader_thread_;
+
+    // Protects current_ctx_ so stop() can cancel an in-progress Read()
+    std::mutex           ctx_mutex_;
+    grpc::ClientContext* current_ctx_ = nullptr;
 };
 
 template <>
