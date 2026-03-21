@@ -10,6 +10,9 @@ DEFINE_bool(tui,      false, "Enable TUI mode");
 DEFINE_bool(gui,      false, "Enable GUI mode (Dear ImGui)");
 DEFINE_bool(log,      false, "Enable logging to MCAP file");
 DEFINE_bool(debug,    false, "Enable debug output");
+DEFINE_bool(grpc_server, false, "Stream CAN frames to gRPC clients");
+DEFINE_string(grpc_client, "", "Receive CAN frames from gRPC server (host:port)");
+DEFINE_uint32(grpc_port, 50051, "gRPC server port");
 DEFINE_string(config,   "", "Path to caneo.yaml config file");
 DEFINE_string(model,    "", "Path to Lua model script");
 DEFINE_string(playback, "", "Path to MCAP file for playback");
@@ -24,6 +27,9 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
     app.gui_mode      = FLAGS_gui;
     app.log_mode      = FLAGS_log;
     app.debug_mode    = FLAGS_debug;
+    app.grpc_server   = FLAGS_grpc_server;
+    app.grpc_client   = FLAGS_grpc_client;
+    app.grpc_port     = static_cast<uint16_t>(FLAGS_grpc_port);
     app.model_path    = FLAGS_model;
     app.playback_path = FLAGS_playback;
 

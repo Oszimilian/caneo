@@ -8,6 +8,9 @@ struct AppConfig {
     bool        gui_mode      = false;
     bool        log_mode      = false;
     bool        debug_mode    = false;
+    bool        grpc_server   = false;
+    std::string grpc_client;       // empty = not a client; "host:port" = connect here
+    uint16_t    grpc_port     = 50051;
     std::string model_path;
     std::string playback_path;
     Config      config;

@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!app.config.interfaces.empty()) {
+    if (!app.config.interfaces.empty() && app.grpc_client.empty()) {
         try {
             setup_interfaces(app.config);
         } catch (const std::exception& e) {
