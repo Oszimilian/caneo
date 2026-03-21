@@ -31,11 +31,14 @@ void run_gui(const AppConfig& app)
     boost::asio::io_context io;
     DecoderRegistry         decoders;
     std::vector<std::unique_ptr<Socket>> sockets;
-    std::map<std::string, SocketCAN*>    socket_map;  // only populated in SocketCAN mode
+    std::map<std::string, SocketCAN*>  socket_map;       // populated in SocketCAN mode
+    std::map<std::string, SocketGrpc*> grpc_socket_map;  // populated in grpc_client mode
 
-    SendFn send_fn = [&socket_map](const std::string& iface, uint64_t id,
-                                   const std::vector<uint8_t>& data) {
-        if (auto it = socket_map.find(iface); it != socket_map.end())
+    SendFn send_fn = [&socket_map, &grpc_socket_map](const std::string& iface, uint64_t id,
+                                                      const std::vector<uint8_t>& data) {
+        if (auto it = grpc_socket_map.find(iface); it != grpc_socket_map.end())
+            it->second->send(id, data);
+        else if (auto it = socket_map.find(iface); it != socket_map.end())
             it->second->send(id, data);
     };
 
@@ -61,8 +64,10 @@ void run_gui(const AppConfig& app)
     }
 
     std::unique_ptr<CanStreamServer> grpc_server;
-    if (app.grpc_server)
+    if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
+        grpc_server->set_send_fn(send_fn);
+    }
 
     FrameTimestampMap last_frame_ts;
     SignalStore       signal_store;
@@ -84,7 +89,9 @@ void run_gui(const AppConfig& app)
             socket_map[cfg.name] = can;
             sock.reset(can);
         } else {
-            sock = std::make_unique<SocketGrpc>(io, cfg.name, app.grpc_client);
+            auto* gs = new SocketGrpc(io, cfg.name, app.grpc_client);
+            grpc_socket_map[cfg.name] = gs;
+            sock.reset(gs);
         }
         auto& socket = sockets.emplace_back(std::move(sock));
         socket->onFrame([gui, &decoders, &proto_registry, &logger,

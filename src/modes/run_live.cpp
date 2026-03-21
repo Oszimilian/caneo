@@ -15,8 +15,11 @@
 #include "socket/SocketCAN.hpp"
 #include "socket/SocketGrpc.hpp"
 
+#include "action/Action.hpp"
+
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,6 +29,16 @@ void run_live(const AppConfig& app) {
     boost::asio::io_context io;
     DecoderRegistry decoders;
     std::vector<std::unique_ptr<Socket>> sockets;
+    std::map<std::string, SocketCAN*>  socket_map;
+    std::map<std::string, SocketGrpc*> grpc_socket_map;
+
+    SendFn send_fn = [&socket_map, &grpc_socket_map](const std::string& iface, uint64_t id,
+                                                      const std::vector<uint8_t>& data) {
+        if (auto it = grpc_socket_map.find(iface); it != grpc_socket_map.end())
+            it->second->send(id, data);
+        else if (auto it = socket_map.find(iface); it != socket_map.end())
+            it->second->send(id, data);
+    };
 
     std::vector<DataFrameSet> sets;
     ProtoLogRegistry proto_registry;
@@ -42,8 +55,10 @@ void run_live(const AppConfig& app) {
         logger = std::make_unique<McapLogger>(app.make_log_path());
 
     std::unique_ptr<CanStreamServer> grpc_server;
-    if (app.grpc_server)
+    if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
+        grpc_server->set_send_fn(send_fn);
+    }
 
     FrameTimestampMap last_frame_ts;
     SignalStore signal_store;
@@ -53,10 +68,15 @@ void run_live(const AppConfig& app) {
 
     for (std::size_t i = 0; i < sets.size(); ++i) {
         std::unique_ptr<Socket> sock;
-        if (app.grpc_client.empty())
-            sock = std::make_unique<SocketCAN>(io, sets[i].interface());
-        else
-            sock = std::make_unique<SocketGrpc>(io, sets[i].interface(), app.grpc_client);
+        if (app.grpc_client.empty()) {
+            auto* can = new SocketCAN(io, sets[i].interface());
+            socket_map[sets[i].interface()] = can;
+            sock.reset(can);
+        } else {
+            auto* gs = new SocketGrpc(io, sets[i].interface(), app.grpc_client);
+            grpc_socket_map[sets[i].interface()] = gs;
+            sock.reset(gs);
+        }
         auto& socket = sockets.emplace_back(std::move(sock));
 
         socket->onFrame([&sets, &decoders, &proto_registry, &logger,

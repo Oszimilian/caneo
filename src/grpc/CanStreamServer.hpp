@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CanStreamService.hpp"
+#include "action/Action.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -14,6 +15,7 @@ public:
     ~CanStreamServer();
 
     void broadcast(const CanFrame& frame) { service_.broadcast(frame); }
+    void set_send_fn(SendFn fn) { service_.set_send_fn(std::move(fn)); }
 
 private:
     CanStreamService              service_;

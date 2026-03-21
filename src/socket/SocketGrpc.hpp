@@ -24,6 +24,8 @@ public:
     const std::string& server_address() const { return server_address_; }
     bool               connected() const { return connected_; }
 
+    void send(uint64_t id, const std::vector<uint8_t>& data);
+
     friend std::ostream& operator<<(std::ostream& os, const SocketGrpc& s);
 
 private:
@@ -37,6 +39,10 @@ private:
     // Protects current_ctx_ so stop() can cancel an in-progress Read()
     std::mutex           ctx_mutex_;
     grpc::ClientContext* current_ctx_ = nullptr;
+
+    // Persistent stub for outgoing Send RPCs (thread-safe).
+    std::shared_ptr<grpc::Channel>          send_channel_;
+    std::unique_ptr<caneo::CanStream::Stub> send_stub_;
 };
 
 template <>

@@ -14,6 +14,11 @@ message SubscribeRequest {
   string interface = 1;  // empty = all interfaces
 }
 
+message SendResult {
+  bool ok = 1;
+}
+
 service CanStream {
   rpc Subscribe(SubscribeRequest) returns (stream RawCanFrame);
+  rpc Send(RawCanFrame) returns (SendResult);
 }

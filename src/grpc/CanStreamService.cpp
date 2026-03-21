@@ -65,3 +65,17 @@ grpc::Status CanStreamService::Subscribe(grpc::ServerContext*,
 
     return grpc::Status::OK;
 }
+
+grpc::Status CanStreamService::Send(grpc::ServerContext*,
+                                    const caneo::RawCanFrame* req,
+                                    caneo::SendResult* result) {
+    if (send_fn_) {
+        const auto& raw = req->data();
+        std::vector<uint8_t> data(raw.begin(), raw.end());
+        send_fn_(req->interface(), req->can_id(), data);
+        result->set_ok(true);
+    } else {
+        result->set_ok(false);
+    }
+    return grpc::Status::OK;
+}
