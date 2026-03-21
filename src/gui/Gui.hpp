@@ -6,6 +6,7 @@
 #include "config/Config.hpp"
 #include "frame/CanFrame.hpp"
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -22,6 +23,9 @@ public:
     // Blocks until window is closed; call from main thread.
     void run();
 
+    // Thread-safe: signals the render loop to exit cleanly.
+    void stop();
+
     // Creates a ModelWindow, adds it to the render loop, returns the raw pointer.
     // Must be called before run(). The window is owned by Gui.
     ModelWindow* add_model_window();
@@ -29,4 +33,5 @@ public:
 private:
     GraphWindow*                         graph_window_ = nullptr;
     std::vector<std::unique_ptr<Window>> windows_;
+    std::atomic<bool>                    stop_requested_{false};
 };

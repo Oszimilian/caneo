@@ -14,6 +14,7 @@
 #include "socket/SocketCAN.hpp"
 
 #include <boost/asio.hpp>
+#include <csignal>
 #include <map>
 #include <memory>
 #include <string>
@@ -78,8 +79,13 @@ void run_gui(const AppConfig& app)
         socket->start();
     }
 
+    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+    signals.async_wait([&gui](const boost::system::error_code& ec, int) {
+        if (!ec) gui->stop();
+    });
+
     std::thread asio_thread([&io] { io.run(); });
-    gui->run();   // blocks until window closed
+    gui->run();   // blocks until window closed or stop() called
     io.stop();
     asio_thread.join();
     logger.reset();

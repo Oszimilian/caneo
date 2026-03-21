@@ -1,6 +1,8 @@
 #include "DbcPppWrapper.hpp"
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -41,20 +43,37 @@ void DbcPppWrapper::decode(CanFrame& frame) {
         if (y_min == 0.0 && y_max == 0.0)
             y_max = std::pow(2.0, static_cast<double>(sig.BitSize()));
 
-        double phys = sig.RawToPhys(sig.Decode(raw));
+        const auto raw_decoded = sig.Decode(raw);
+        double phys;
 
-        // Some DBC files declare a signal as signed ('-') but define a non-negative
-        // physical range (e.g. [0|16383]).  When raw values have the sign-bit set
-        // dbcppp correctly sign-extends them, producing negative physical values that
-        // contradict the declared range.  Detect this and re-interpret the raw bits
-        // as unsigned so the value lands in [dbc_min, dbc_max].
-        if (phys < y_min && y_min >= 0.0 && y_max > y_min) {
-            const auto     raw_bits = static_cast<uint64_t>(sig.Decode(raw));
-            const uint64_t mask     = (sig.BitSize() < 64)
-                                      ? ((uint64_t{1} << sig.BitSize()) - 1u)
-                                      : ~uint64_t{0};
-            phys = static_cast<double>(raw_bits & mask)
-                   * sig.Factor() + sig.Offset();
+        using EVT = dbcppp::ISignal::EExtendedValueType;
+        switch (sig.ExtendedValueType()) {
+            case EVT::Float: {
+                const auto bits = static_cast<uint32_t>(static_cast<uint64_t>(raw_decoded));
+                phys = static_cast<double>(std::bit_cast<float>(bits));
+                break;
+            }
+            case EVT::Double: {
+                const auto bits = static_cast<uint64_t>(raw_decoded);
+                phys = std::bit_cast<double>(bits);
+                break;
+            }
+            default:
+                phys = sig.RawToPhys(raw_decoded);
+                // Some DBC files declare a signal as signed ('-') but define a non-negative
+                // physical range (e.g. [0|16383]).  When raw values have the sign-bit set
+                // dbcppp correctly sign-extends them, producing negative physical values that
+                // contradict the declared range.  Detect this and re-interpret the raw bits
+                // as unsigned so the value lands in [dbc_min, dbc_max].
+                if (phys < y_min && y_min >= 0.0 && y_max > y_min) {
+                    const auto     raw_bits = static_cast<uint64_t>(raw_decoded);
+                    const uint64_t mask     = (sig.BitSize() < 64)
+                                              ? ((uint64_t{1} << sig.BitSize()) - 1u)
+                                              : ~uint64_t{0};
+                    phys = static_cast<double>(raw_bits & mask)
+                           * sig.Factor() + sig.Offset();
+                }
+                break;
         }
 
         frame.addDecoded(DecodedSignal{

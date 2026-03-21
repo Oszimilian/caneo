@@ -38,11 +38,18 @@ void TraceWindow::update(const CanFrame& frame)
     set_.update(frame);
 }
 
+const std::string& TraceWindow::interface_name() const { return set_.interface(); }
+
 void TraceWindow::render()
 {
     const std::string title = std::format("Trace — {}", set_.interface());
     ImGui::Begin(title.c_str());
+    render_content();
+    ImGui::End();
+}
 
+void TraceWindow::render_content()
+{
     // Search bar
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##search", "Search (ID, name, signal, unit)...", search_buf_, sizeof(search_buf_));
@@ -174,6 +181,4 @@ void TraceWindow::render()
         }
         ImGui::EndPopup();
     }
-
-    ImGui::End();
 }

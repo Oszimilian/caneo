@@ -15,6 +15,12 @@ public:
     void update(const CanFrame& frame) override;
     void render() override;
 
+    // Renders only the inner content (search bar + table + popups), no Begin/End.
+    // Called by TraceContainerWindow inside a tab item.
+    void render_content();
+
+    const std::string& interface_name() const;
+
 private:
     DataFrameSet  set_;
     std::mutex    mutex_;

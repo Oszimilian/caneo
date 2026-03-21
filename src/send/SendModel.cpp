@@ -1,6 +1,8 @@
 #include "SendModel.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <fstream>
 #include <ranges>
 #include <stdexcept>
@@ -44,8 +46,24 @@ void SendModel::set_value(std::size_t msg_idx, std::size_t sig_idx, double value
 std::vector<uint8_t> SendModel::encode(std::size_t msg_idx) const {
     const SendMessage& sm = messages_[msg_idx];
     std::vector<uint8_t> data(sm.dlc, 0);
+    using EVT = dbcppp::ISignal::EExtendedValueType;
     for (const SendSignal& ss : sm.signals) {
-        const dbcppp::ISignal::raw_t raw = ss.sig->PhysToRaw(ss.value);
+        dbcppp::ISignal::raw_t raw;
+        switch (ss.sig->ExtendedValueType()) {
+            case EVT::Float: {
+                const auto bits = std::bit_cast<uint32_t>(static_cast<float>(ss.value));
+                raw = static_cast<dbcppp::ISignal::raw_t>(bits);
+                break;
+            }
+            case EVT::Double: {
+                const auto bits = std::bit_cast<uint64_t>(ss.value);
+                raw = static_cast<dbcppp::ISignal::raw_t>(bits);
+                break;
+            }
+            default:
+                raw = ss.sig->PhysToRaw(ss.value);
+                break;
+        }
         ss.sig->Encode(raw, data.data());
     }
     return data;

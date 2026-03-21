@@ -4,6 +4,7 @@
 #include "GraphWindow.hpp"
 #include "ModelWindow.hpp"
 #include "SendWindow.hpp"
+#include "TraceContainerWindow.hpp"
 #include "TraceWindow.hpp"
 
 #include <GLFW/glfw3.h>
@@ -21,8 +22,10 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
     auto graph_window = std::make_unique<GraphWindow>();
     graph_window_ = graph_window.get();
 
+    auto trace_container = std::make_unique<TraceContainerWindow>();
     for (const auto& cfg : iface_configs)
-        windows_.push_back(std::make_unique<TraceWindow>(cfg.name, *graph_window_));
+        trace_container->add(std::make_unique<TraceWindow>(cfg.name, *graph_window_));
+    windows_.push_back(std::move(trace_container));
 
     windows_.push_back(std::move(graph_window));
 
@@ -30,6 +33,11 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs,
     SendWindow* sw   = send_window.get();
     windows_.push_back(std::move(send_window));
     windows_.push_back(std::make_unique<ActionsWindow>(action_handler, *sw));
+}
+
+void Gui::stop()
+{
+    stop_requested_ = true;
 }
 
 ModelWindow* Gui::add_model_window()
@@ -109,7 +117,7 @@ void Gui::run()
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(window) && !stop_requested_) {
         glfwPollEvents();
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -128,6 +136,9 @@ void Gui::run()
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
+
+    // Save settings explicitly so they're not lost on signal shutdown.
+    ImGui::SaveIniSettingsToDisk(io.IniFilename);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
