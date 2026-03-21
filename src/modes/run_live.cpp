@@ -6,11 +6,14 @@
 #include "frame/CanFrame.hpp"
 #include "frame/DataFrame.hpp"
 #include "frame/DataFrameSet.hpp"
+#include "grpc/CanStreamServer.hpp"
 #include "logger/McapLogger.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
+#include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
+#include "socket/SocketGrpc.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -22,7 +25,7 @@
 void run_live(const AppConfig& app) {
     boost::asio::io_context io;
     DecoderRegistry decoders;
-    std::vector<std::unique_ptr<SocketCAN>> sockets;
+    std::vector<std::unique_ptr<Socket>> sockets;
 
     std::vector<DataFrameSet> sets;
     ProtoLogRegistry proto_registry;
@@ -38,6 +41,10 @@ void run_live(const AppConfig& app) {
     if (app.log_mode)
         logger = std::make_unique<McapLogger>(app.make_log_path());
 
+    std::unique_ptr<CanStreamServer> grpc_server;
+    if (app.grpc_server)
+        grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
+
     FrameTimestampMap last_frame_ts;
     SignalStore signal_store;
     std::unique_ptr<ModelEngine> model_engine;
@@ -45,13 +52,19 @@ void run_live(const AppConfig& app) {
         model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
 
     for (std::size_t i = 0; i < sets.size(); ++i) {
-        auto& socket = sockets.emplace_back(
-            std::make_unique<SocketCAN>(io, sets[i].interface()));
+        std::unique_ptr<Socket> sock;
+        if (app.grpc_client.empty())
+            sock = std::make_unique<SocketCAN>(io, sets[i].interface());
+        else
+            sock = std::make_unique<SocketGrpc>(io, sets[i].interface(), app.grpc_client);
+        auto& socket = sockets.emplace_back(std::move(sock));
+
         socket->onFrame([&sets, &decoders, &proto_registry, &logger,
-                         &last_frame_ts, &model_engine, &app, i]
+                         &last_frame_ts, &model_engine, &grpc_server, &app, i]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (f) {
+                if (grpc_server) grpc_server->broadcast(*f);
                 try { decoders.decode(*f); } catch (const std::runtime_error&) {}
                 sets[i].update(*f);
                 if (model_engine) model_engine->on_frame(*f);
@@ -70,7 +83,7 @@ void run_live(const AppConfig& app) {
             }
         });
         socket->start();
-        std::println("Listening on {}...", *socket);
+        std::println("Listening on [{}]...", sets[i].interface());
     }
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);

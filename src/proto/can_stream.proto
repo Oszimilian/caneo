@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package caneo;
+
+message RawCanFrame {
+  string interface    = 1;
+  uint32 can_id       = 2;
+  uint32 dlc          = 3;
+  bytes  data         = 4;
+  int64  timestamp_us = 5;
+}
+
+message SubscribeRequest {
+  string interface = 1;  // empty = all interfaces
+}
+
+service CanStream {
+  rpc Subscribe(SubscribeRequest) returns (stream RawCanFrame);
+}

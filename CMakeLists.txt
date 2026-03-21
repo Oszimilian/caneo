@@ -18,6 +18,7 @@ find_package(imgui REQUIRED)
 find_package(implot REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(gRPC REQUIRED)
 
 add_executable(caneo
     src/main.cpp
@@ -26,6 +27,7 @@ add_executable(caneo
     src/frame/DataFrameSet.cpp
     src/socket/Socket.cpp
     src/socket/SocketCAN.cpp
+    src/socket/SocketGrpc.cpp
     src/decoder/DbcPppWrapper.cpp
     src/decoder/DecoderRegistry.cpp
     src/gui/TuiDataFrameSet.cpp
@@ -44,6 +46,8 @@ add_executable(caneo
     src/action/Action.cpp
     src/action/ActionHandler.cpp
     src/action/ActionPreset.cpp
+    src/grpc/CanStreamService.cpp
+    src/grpc/CanStreamServer.cpp
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
     src/logger/McapLogger.cpp
@@ -55,6 +59,37 @@ add_executable(caneo
     src/modes/run_live.cpp
     src/modes/run_gui.cpp
 )
+
+# gRPC / protobuf codegen for can_stream.proto
+set(PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/proto/can_stream.proto")
+set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/proto_gen")
+file(MAKE_DIRECTORY "${PROTO_OUT_DIR}")
+
+get_target_property(PROTOC_EXE protobuf::protoc LOCATION)
+get_target_property(GRPC_CPP_PLUGIN gRPC::grpc_cpp_plugin LOCATION)
+
+add_custom_command(
+    OUTPUT
+        "${PROTO_OUT_DIR}/can_stream.pb.cc"
+        "${PROTO_OUT_DIR}/can_stream.pb.h"
+        "${PROTO_OUT_DIR}/can_stream.grpc.pb.cc"
+        "${PROTO_OUT_DIR}/can_stream.grpc.pb.h"
+    COMMAND "${PROTOC_EXE}"
+    ARGS
+        "--cpp_out=${PROTO_OUT_DIR}"
+        "--grpc_out=${PROTO_OUT_DIR}"
+        "--plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/src/proto"
+        "${PROTO_FILE}"
+    DEPENDS "${PROTO_FILE}"
+    COMMENT "Generating gRPC sources from can_stream.proto"
+)
+
+target_sources(caneo PRIVATE
+    "${PROTO_OUT_DIR}/can_stream.pb.cc"
+    "${PROTO_OUT_DIR}/can_stream.grpc.pb.cc"
+)
+target_include_directories(caneo PRIVATE "${PROTO_OUT_DIR}")
 
 # ImGui GLFW + OpenGL3 backends are not shipped by the Conan package.
 # Download them from GitHub at configure time (matching the installed version).
@@ -95,4 +130,5 @@ target_link_libraries(caneo PRIVATE
     implot::implot
     glfw
     OpenGL::GL
+    gRPC::grpc++
 )
