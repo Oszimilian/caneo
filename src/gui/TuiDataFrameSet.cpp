@@ -154,6 +154,22 @@ void TuiDataFrameSet::set_status_indicator(std::string label, std::function<bool
     status_connected_fn_ = std::move(connected_fn);
 }
 
+void TuiDataFrameSet::enable_model_tab() {
+    model_tab_enabled_ = true;
+}
+
+void TuiDataFrameSet::push_model_output(const std::string& name, double value) {
+    {
+        std::lock_guard lock(mutex_);
+        model_outputs_[name] = value;
+    }
+    screen_.PostEvent(Event::Custom);
+}
+
+int TuiDataFrameSet::playback_tab_idx() const {
+    return model_tab_enabled_ ? 4 : 3;
+}
+
 void TuiDataFrameSet::run() {
     action_handler_.set_notify([this] { screen_.PostEvent(Event::Custom); });
 
@@ -402,8 +418,11 @@ void TuiDataFrameSet::run() {
         if (event == Event::Character('t')) { main_tab_ = 0; nav_level_ = 1; return true; }
         if (event == Event::Character('s')) { main_tab_ = 1; nav_level_ = 1; return true; }
         if (event == Event::Character('a')) { main_tab_ = 2; nav_level_ = 1; return true; }
-        if (event == Event::Character('p') && playback_ctrl_) {
+        if (event == Event::Character('m') && model_tab_enabled_) {
             main_tab_ = 3; nav_level_ = 1; return true;
+        }
+        if (event == Event::Character('p') && playback_ctrl_) {
+            main_tab_ = playback_tab_idx(); nav_level_ = 1; return true;
         }
         if (event == Event::Character('f') && main_tab_ == 0) {
             trace_searching_ = true;
@@ -479,7 +498,7 @@ void TuiDataFrameSet::run() {
         }
 
         // ── nav_level_ == 2: playback message filter ──────────────────────
-        if (nav_level_ == 2 && main_tab_ == 3 && playback_ctrl_) {
+        if (nav_level_ == 2 && main_tab_ == playback_tab_idx() && playback_ctrl_) {
             if (event == Event::ArrowLeft) {
                 nav_level_ = 1;
                 return true;
@@ -607,7 +626,7 @@ void TuiDataFrameSet::run() {
         // ── Sub-tabs / Action list (nav_level_ == 1) ──────────────────────
         if (nav_level_ == 1) {
             // Playback tab: interface list
-            if (main_tab_ == 3 && playback_ctrl_) {
+            if (main_tab_ == playback_tab_idx() && playback_ctrl_) {
                 if (event == Event::ArrowUp) {
                     if (playback_cursor_ > 0) --playback_cursor_;
                     else nav_level_ = 0;
@@ -744,7 +763,7 @@ void TuiDataFrameSet::run() {
             return true;
         }
         {
-            const int tab_count = playback_ctrl_ ? 4 : 3;
+            const int tab_count = 3 + (model_tab_enabled_ ? 1 : 0) + (playback_ctrl_ ? 1 : 0);
             if (event == Event::ArrowRight) {
                 main_tab_ = (main_tab_ + 1) % tab_count;
                 return true;
@@ -1288,13 +1307,37 @@ Element TuiDataFrameSet::render_playback() const {
     });
 }
 
+// ─── Model tab ─────────────────────────────────────────────────────────────
+
+Element TuiDataFrameSet::render_model() const {
+    if (model_outputs_.empty())
+        return text("Noch keine Modell-Ausgaben.") | dim | center;
+
+    Elements rows;
+    rows.push_back(hbox({
+        text("Variable") | bold | flex,
+        text("Wert")     | bold | size(WIDTH, EQUAL, 24),
+    }));
+    rows.push_back(separator());
+
+    for (const auto& [name, value] : model_outputs_) {
+        rows.push_back(hbox({
+            text(name) | flex,
+            text(std::format("{:.6g}", value)) | size(WIDTH, EQUAL, 24),
+        }));
+    }
+
+    return vbox(std::move(rows));
+}
+
 // ─── Top-level render ──────────────────────────────────────────────────────
 
 Element TuiDataFrameSet::render() const {
     std::lock_guard lock(mutex_);
 
     std::vector<std::string> tab_labels = {"Trace", "Send", "Actions"};
-    if (playback_ctrl_) tab_labels.push_back("Playback");
+    if (model_tab_enabled_) tab_labels.push_back("Model");
+    if (playback_ctrl_)     tab_labels.push_back("Playback");
 
     const Element main_tabs = make_tab_bar(tab_labels, main_tab_, nav_level_ == 0);
 
@@ -1303,6 +1346,7 @@ Element TuiDataFrameSet::render() const {
         case 0:  content = render_trace();    break;
         case 1:  content = render_send();     break;
         case 2:  content = render_actions();  break;
+        case 3:  content = model_tab_enabled_ ? render_model() : render_playback(); break;
         default: content = render_playback(); break;
     }
 

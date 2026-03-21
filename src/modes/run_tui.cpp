@@ -61,8 +61,13 @@ void run_tui(const AppConfig& app) {
     FrameTimestampMap last_frame_ts;
     SignalStore signal_store;
     std::unique_ptr<ModelEngine> model_engine;
-    if (!app.model_path.empty())
+    if (!app.model_path.empty()) {
         model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
+        tui->enable_model_tab();
+        model_engine->set_output_callback([tui](const std::string& name, double value) {
+            tui->push_model_output(name, value);
+        });
+    }
 
     for (const auto& cfg : app.config.interfaces) {
         if (!cfg.dbc.empty())

@@ -28,6 +28,11 @@ public:
 
     void set_status_indicator(std::string label, std::function<bool()> connected_fn);
 
+    // Model tab: call enable_model_tab() before run(), then push_model_output()
+    // from the asio thread (e.g. via ModelEngine::set_output_callback).
+    void enable_model_tab();
+    void push_model_output(const std::string& name, double value);
+
 private:
     // Rendering
     ftxui::Element render() const;
@@ -38,6 +43,8 @@ private:
     ftxui::Element render_actions() const;
     ftxui::Element render_action_signals(const ActionInfo& info) const;
     ftxui::Element render_playback() const;
+    ftxui::Element render_model() const;
+    int            playback_tab_idx() const;
 
     // Helpers
     const std::string& selected_send_iface() const;
@@ -97,6 +104,10 @@ private:
     // ── gRPC status indicator ─────────────────────────────────────────────
     std::string           status_label_;
     std::function<bool()> status_connected_fn_;
+
+    // ── Model tab ─────────────────────────────────────────────────────────
+    bool                          model_tab_enabled_ = false;
+    std::map<std::string, double> model_outputs_;  // guarded by mutex_
 
     // ── Trace data (guarded by mutex_) ────────────────────────────────────
     mutable std::mutex                  mutex_;
