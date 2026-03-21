@@ -149,6 +149,11 @@ void TuiDataFrameSet::create_sin_action(double amplitude,
 
 // ─── Event loop ────────────────────────────────────────────────────────────
 
+void TuiDataFrameSet::set_status_indicator(std::string label, std::function<bool()> connected_fn) {
+    status_label_        = std::move(label);
+    status_connected_fn_ = std::move(connected_fn);
+}
+
 void TuiDataFrameSet::run() {
     action_handler_.set_notify([this] { screen_.PostEvent(Event::Custom); });
 
@@ -1301,5 +1306,16 @@ Element TuiDataFrameSet::render() const {
         default: content = render_playback(); break;
     }
 
-    return window(text(" caneo "), vbox({main_tabs, separator(), content}));
+    Element title = text(" caneo ");
+    if (status_connected_fn_) {
+        const bool connected = status_connected_fn_();
+        Element dot   = text("● ") | color(connected ? Color::Green : Color::Red);
+        Element label = text(status_label_);
+        Element indicator = connected
+            ? hbox({dot, label, text(" ")})
+            : hbox({dot, label, text(" (reconnecting...) ") | dim});
+        title = hbox({title, filler(), indicator});
+    }
+
+    return window(title, vbox({main_tabs, separator(), content}));
 }

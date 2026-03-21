@@ -10,6 +10,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,8 @@ public:
 
     void update(const CanFrame& frame) override;
     void run() override;
+
+    void set_status_indicator(std::string label, std::function<bool()> connected_fn);
 
 private:
     // Rendering
@@ -90,6 +93,10 @@ private:
     bool        trace_searching_   = false;
     std::string trace_search_buf_;
     int         trace_cursor_      = 0;
+
+    // ── gRPC status indicator ─────────────────────────────────────────────
+    std::string           status_label_;
+    std::function<bool()> status_connected_fn_;
 
     // ── Trace data (guarded by mutex_) ────────────────────────────────────
     mutable std::mutex                  mutex_;
