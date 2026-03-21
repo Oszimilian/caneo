@@ -16,6 +16,7 @@
 #include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
 #include "socket/SocketGrpc.hpp"
+#include <algorithm>
 
 #include <boost/asio.hpp>
 #include <csignal>
@@ -98,6 +99,20 @@ void run_gui(const AppConfig& app)
             log_frame(*f, logger.get(), proto_registry, last_frame_ts);
         });
         socket->start();
+    }
+
+    // Show gRPC connection indicator when running as client.
+    if (!app.grpc_client.empty()) {
+        std::vector<SocketGrpc*> grpc_sockets;
+        for (auto& s : sockets)
+            if (auto* gs = dynamic_cast<SocketGrpc*>(s.get()))
+                grpc_sockets.push_back(gs);
+        if (!grpc_sockets.empty()) {
+            gui->set_status_indicator(app.grpc_client, [grpc_sockets]() {
+                return std::any_of(grpc_sockets.begin(), grpc_sockets.end(),
+                                   [](SocketGrpc* s) { return s->connected(); });
+            });
+        }
     }
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);

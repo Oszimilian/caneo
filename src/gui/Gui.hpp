@@ -7,7 +7,9 @@
 #include "frame/CanFrame.hpp"
 
 #include <atomic>
+#include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 class ModelWindow;
@@ -33,8 +35,14 @@ public:
     // Returns the shared GraphWindow. Valid for the lifetime of this Gui.
     GraphWindow* graph_window() { return graph_window_; }
 
+    // Shows a connection status overlay (●) in the top-right corner.
+    // connected_fn is called each frame from the render thread.
+    void set_status_indicator(std::string label, std::function<bool()> connected_fn);
+
 private:
     GraphWindow*                         graph_window_ = nullptr;
     std::vector<std::unique_ptr<Window>> windows_;
     std::atomic<bool>                    stop_requested_{false};
+    std::string                          status_label_;
+    std::function<bool()>                status_connected_fn_;
 };

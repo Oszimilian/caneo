@@ -40,6 +40,12 @@ void Gui::stop()
     stop_requested_ = true;
 }
 
+void Gui::set_status_indicator(std::string label, std::function<bool()> connected_fn)
+{
+    status_label_        = std::move(label);
+    status_connected_fn_ = std::move(connected_fn);
+}
+
 ModelWindow* Gui::add_model_window()
 {
     auto mw = std::make_unique<ModelWindow>(*graph_window_);
@@ -126,6 +132,30 @@ void Gui::run()
 
         for (auto& w : windows_)
             w->render();
+
+        if (status_connected_fn_) {
+            const bool connected = status_connected_fn_();
+            const ImGuiIO& imgui_io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(
+                ImVec2(imgui_io.DisplaySize.x - 10.0f, 10.0f),
+                ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.75f);
+            ImGui::Begin("##grpc_status", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoNav         | ImGuiWindowFlags_NoMove  |
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+            const ImVec4 color = connected
+                ? ImVec4(0.1f, 0.7f, 0.15f, 1.0f)
+                : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
+            ImGui::TextColored(color, "●");
+            ImGui::SameLine();
+            ImGui::Text("%s", status_label_.c_str());
+            if (!connected) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(reconnecting...)");
+            }
+            ImGui::End();
+        }
 
         ImGui::Render();
         int w, h;
