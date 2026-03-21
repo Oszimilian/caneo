@@ -3,6 +3,7 @@
 
 #include "action/ActionHandler.hpp"
 #include "action/ActionPreset.hpp"
+#include "gui/GraphPreset.hpp"
 #include "gui/ModelWindow.hpp"
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
@@ -41,6 +42,10 @@ void run_gui(const AppConfig& app)
         load_action_presets(cfg, action_handler);
 
     auto gui = std::make_shared<Gui>(app.config.interfaces, action_handler);
+
+    // Load per-interface graph presets
+    for (const auto& cfg : app.config.interfaces)
+        load_graph_preset(cfg, *gui->graph_window());
 
     ProtoLogRegistry proto_registry;
     std::unique_ptr<Logger> logger;

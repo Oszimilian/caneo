@@ -52,10 +52,12 @@ void GraphWindow::push_value(const std::string& interface,
     }
 }
 
-size_t GraphWindow::add_graph()
+size_t GraphWindow::add_graph(std::string name)
 {
     std::lock_guard lock(mutex_);
-    graphs_.push_back({ std::format("graph{}", graphs_.size() + 1), {} });
+    if (name.empty())
+        name = std::format("graph{}", graphs_.size() + 1);
+    graphs_.push_back({ std::move(name), {} });
     return graphs_.size() - 1;
 }
 
@@ -65,7 +67,8 @@ void GraphWindow::add_signal(size_t             graph_idx,
                              const std::string& signal_name,
                              double             y_min,
                              double             y_max,
-                             int                y_axis)
+                             int                y_axis,
+                             std::string        label)
 {
     std::lock_guard lock(mutex_);
     if (graph_idx >= graphs_.size())
@@ -76,7 +79,9 @@ void GraphWindow::add_signal(size_t             graph_idx,
             s.msg_id    == msg_id    &&
             s.signal_name == signal_name)
             return;  // already present
-    tab.series.push_back({ interface, msg_id, signal_name, y_min, y_max, y_axis, {}, {} });
+    if (label.empty())
+        label = signal_name;
+    tab.series.push_back({ interface, msg_id, signal_name, std::move(label), y_min, y_max, y_axis, {}, {} });
 }
 
 std::vector<std::string> GraphWindow::graph_names() const
@@ -177,10 +182,10 @@ void GraphWindow::render()
                     const int axis = std::clamp(s.y_axis, 0, 2);
                     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1 + axis);
                     ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 3.0f);
-                    ImPlot::PlotLine(s.signal_name.c_str(),
+                    ImPlot::PlotLine(s.label.c_str(),
                                      s.xs.data(), s.ys.data(),
                                      static_cast<int>(s.xs.size()));
-                    if (ImPlot::IsLegendEntryHovered(s.signal_name.c_str()) &&
+                    if (ImPlot::IsLegendEntryHovered(s.label.c_str()) &&
                         ImGui::IsMouseReleased(ImGuiMouseButton_Right))
                     {
                         pending_series_ctx_ = { ti, si, s.signal_name, s.y_axis };

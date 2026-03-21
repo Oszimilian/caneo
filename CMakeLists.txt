@@ -36,6 +36,7 @@ add_executable(caneo
     src/gui/TraceContainerWindow.cpp
     src/gui/SendWindow.cpp
     src/gui/ActionsWindow.cpp
+    src/gui/GraphPreset.cpp
     src/config/Config.cpp
     src/config/AppConfig.cpp
     src/setup/InterfaceSetup.cpp

@@ -22,14 +22,15 @@ public:
     void render() override;
 
     // Called from render thread only:
-    size_t add_graph();
+    size_t add_graph(std::string name = {});
     void   add_signal(size_t graph_idx,
                       const std::string& interface,
                       uint32_t           msg_id,
                       const std::string& signal_name,
                       double             y_min,
                       double             y_max,
-                      int                y_axis = 0); // 0=Y1, 1=Y2, 2=Y3
+                      int                y_axis = 0,      // 0=Y1, 1=Y2, 2=Y3
+                      std::string        label  = {});    // display label; defaults to signal_name
     std::vector<std::string> graph_names() const;
 
 private:
@@ -37,6 +38,7 @@ private:
         std::string interface;
         uint32_t    msg_id;
         std::string signal_name;
+        std::string label;        // display label (may differ from signal_name)
         double      y_min  = 0.0;
         double      y_max  = 0.0;
         int         y_axis = 0;   // 0=Y1, 1=Y2, 2=Y3

@@ -1,0 +1,15 @@
+- name: "ITK-Sensoren"
+  signals:
+    - msg: CAN_IF_SPEED_X
+      signal: CAN_IF_TRACKED_SPEED
+    - msg: CAN_IF_SPEED_Y
+      signal: CAN_IF_TRACKED_SPEED
+
+- name: "Lenkung"
+  signals:
+    - msg: RFC4800_LWS
+      signal: LWS_Sensor
+    - msg: SS_ELMO_TARGET
+      signal: SS_ELMO_TARGET_LWS
+
+

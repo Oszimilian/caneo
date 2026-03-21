@@ -44,6 +44,8 @@ static Config parse_config(const YAML::Node& root) {
                     cfg.baudrate = entry.second["baudrate"].as<uint32_t>();
                 if (entry.second["actions"])
                     cfg.actions_file = entry.second["actions"].as<std::string>();
+                if (entry.second["graphs_preset"])
+                    cfg.graphs_file = entry.second["graphs_preset"].as<std::string>();
             }
         }
         result.interfaces.push_back(std::move(cfg));

@@ -8,9 +8,10 @@
 
 struct InterfaceConfig {
     std::string name;
-    std::string dbc;          // empty if not set
-    std::string actions_file; // empty if not set
-    uint32_t    baudrate = 0; // 0 if not set
+    std::string dbc;           // empty if not set
+    std::string actions_file;  // empty if not set
+    std::string graphs_file;   // empty if not set
+    uint32_t    baudrate = 0;  // 0 if not set
 };
 
 struct Config {
