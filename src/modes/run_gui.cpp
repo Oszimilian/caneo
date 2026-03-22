@@ -1,5 +1,4 @@
 #include "run_gui.hpp"
-#include "log_frame.hpp"
 
 #include "action/ActionHandler.hpp"
 #include "action/ActionPreset.hpp"
@@ -8,7 +7,9 @@
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
 #include "gui/Gui.hpp"
-#include "logger/McapLogger.hpp"
+#include "logger/ILogControl.hpp"
+#include "logger/LogController.hpp"
+#include "grpc/RemoteLogControl.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
@@ -55,13 +56,26 @@ void run_gui(const AppConfig& app)
         load_graph_preset(cfg, *gui->graph_window());
 
     ProtoLogRegistry proto_registry;
-    std::unique_ptr<Logger> logger;
-    if (app.log_mode) {
-        for (const auto& cfg : app.config.interfaces)
-            if (!cfg.dbc.empty())
-                proto_registry.add_interface(cfg.name, cfg.dbc);
-        logger = std::make_unique<McapLogger>(app.make_log_path());
+    for (const auto& cfg : app.config.interfaces)
+        if (!cfg.dbc.empty())
+            proto_registry.add_interface(cfg.name, cfg.dbc);
+
+    // In gRPC client mode the server owns the log; we control it remotely.
+    // In local mode we log here directly.
+    std::unique_ptr<ILogControl>  log_control;
+    LogController*                local_lc = nullptr;  // only set in local mode
+
+    if (app.grpc_client.empty()) {
+        auto lc = std::make_unique<LogController>(app, proto_registry);
+        if (app.log_mode) lc->start();
+        local_lc    = lc.get();
+        log_control = std::move(lc);
+    } else {
+        auto rc = std::make_unique<RemoteLogControl>(app.grpc_client);
+        if (app.log_mode) rc->start();
+        log_control = std::move(rc);
     }
+    gui->set_log_controller(log_control.get());
 
     std::unique_ptr<CanStreamServer> grpc_server;
     if (app.grpc_server) {
@@ -69,11 +83,10 @@ void run_gui(const AppConfig& app)
         grpc_server->set_send_fn(send_fn);
     }
 
-    FrameTimestampMap last_frame_ts;
     SignalStore       signal_store;
     std::unique_ptr<ModelEngine> model_engine;
     if (!app.model_path.empty()) {
-        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
+        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, local_lc);
         auto* mw = gui->add_model_window();
         model_engine->set_output_callback([mw](const std::string& name, double value) {
             mw->push(name, value);
@@ -94,8 +107,7 @@ void run_gui(const AppConfig& app)
             sock.reset(gs);
         }
         auto& socket = sockets.emplace_back(std::move(sock));
-        socket->onFrame([gui, &decoders, &proto_registry, &logger,
-                         &last_frame_ts, &model_engine, &grpc_server]
+        socket->onFrame([gui, &decoders, local_lc, &model_engine, &grpc_server]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (!f) return;
@@ -103,7 +115,7 @@ void run_gui(const AppConfig& app)
             try { decoders.decode(*f); } catch (const std::runtime_error&) {}
             gui->update(*f);
             if (model_engine) model_engine->on_frame(*f);
-            log_frame(*f, logger.get(), proto_registry, last_frame_ts);
+            if (local_lc) local_lc->log_can_frame(*f);
         });
         socket->start();
     }
@@ -131,5 +143,5 @@ void run_gui(const AppConfig& app)
     gui->run();   // blocks until window closed or stop() called
     io.stop();
     asio_thread.join();
-    logger.reset();
+    log_control->stop();
 }

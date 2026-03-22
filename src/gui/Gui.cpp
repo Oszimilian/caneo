@@ -6,6 +6,7 @@
 #include "SendWindow.hpp"
 #include "TraceContainerWindow.hpp"
 #include "TraceWindow.hpp"
+#include "logger/ILogControl.hpp"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -44,6 +45,11 @@ void Gui::set_status_indicator(std::string label, std::function<bool()> connecte
 {
     status_label_        = std::move(label);
     status_connected_fn_ = std::move(connected_fn);
+}
+
+void Gui::set_log_controller(ILogControl* lc)
+{
+    log_controller_ = lc;
 }
 
 ModelWindow* Gui::add_model_window()
@@ -133,27 +139,58 @@ void Gui::run()
         for (auto& w : windows_)
             w->render();
 
-        if (status_connected_fn_) {
-            const bool connected = status_connected_fn_();
+        if (status_connected_fn_ || log_controller_) {
             const ImGuiIO& imgui_io = ImGui::GetIO();
             ImGui::SetNextWindowPos(
                 ImVec2(imgui_io.DisplaySize.x - 10.0f, 10.0f),
                 ImGuiCond_Always, ImVec2(1.0f, 0.0f));
             ImGui::SetNextWindowBgAlpha(0.75f);
-            ImGui::Begin("##grpc_status", nullptr,
-                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+            ImGui::Begin("##overlay", nullptr,
+                ImGuiWindowFlags_NoDecoration |
                 ImGuiWindowFlags_NoNav         | ImGuiWindowFlags_NoMove  |
                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
-            const ImVec4 color = connected
-                ? ImVec4(0.1f, 0.7f, 0.15f, 1.0f)
-                : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
-            ImGui::TextColored(color, "●");
-            ImGui::SameLine();
-            ImGui::Text("%s", status_label_.c_str());
-            if (!connected) {
+
+            // ---- log controls (left part of the single row) ----
+            bool logging = false;
+            if (log_controller_) {
+                logging = log_controller_->is_logging();
+                if (ImGui::Button(logging ? "Stop Log" : "Start Log")) {
+                    if (logging) log_controller_->stop();
+                    else         log_controller_->start();
+                }
                 ImGui::SameLine();
-                ImGui::TextDisabled("(reconnecting...)");
+                const ImVec4 rec_color = logging
+                    ? ImVec4(0.85f, 0.1f, 0.1f, 1.0f)
+                    : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                ImGui::TextColored(rec_color, logging ? "[REC]" : "[---]");
+                if (status_connected_fn_) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("|");
+                }
             }
+
+            // ---- gRPC status (right part of the single row) ----
+            if (status_connected_fn_) {
+                const bool connected = status_connected_fn_();
+                ImGui::SameLine();
+                const ImVec4 color = connected
+                    ? ImVec4(0.1f, 0.7f, 0.15f, 1.0f)
+                    : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
+                ImGui::TextColored(color, connected ? "[OK]" : "[!!]");
+                ImGui::SameLine();
+                ImGui::Text("%s", status_label_.c_str());
+                if (!connected) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(reconnecting...)");
+                }
+            }
+
+            // ---- log file path (second line, only when active) ----
+            if (logging) {
+                const std::string path = log_controller_->current_path();
+                ImGui::TextDisabled("%s", path.c_str());
+            }
+
             ImGui::End();
         }
 

@@ -1,5 +1,4 @@
 #include "run_live.hpp"
-#include "log_frame.hpp"
 
 #include "compat/print.hpp"
 #include "decoder/DecoderRegistry.hpp"
@@ -7,7 +6,7 @@
 #include "frame/DataFrame.hpp"
 #include "frame/DataFrameSet.hpp"
 #include "grpc/CanStreamServer.hpp"
-#include "logger/McapLogger.hpp"
+#include "logger/LogController.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
@@ -50,21 +49,21 @@ void run_live(const AppConfig& app) {
         }
     }
 
-    std::unique_ptr<Logger> logger;
+    LogController log_controller(app, proto_registry);
     if (app.log_mode)
-        logger = std::make_unique<McapLogger>(app.make_log_path());
+        log_controller.start();
 
     std::unique_ptr<CanStreamServer> grpc_server;
     if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
         grpc_server->set_send_fn(send_fn);
+        grpc_server->set_log_controller(&log_controller);
     }
 
-    FrameTimestampMap last_frame_ts;
     SignalStore signal_store;
     std::unique_ptr<ModelEngine> model_engine;
     if (!app.model_path.empty())
-        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
+        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, &log_controller);
 
     for (std::size_t i = 0; i < sets.size(); ++i) {
         std::unique_ptr<Socket> sock;
@@ -79,8 +78,8 @@ void run_live(const AppConfig& app) {
         }
         auto& socket = sockets.emplace_back(std::move(sock));
 
-        socket->onFrame([&sets, &decoders, &proto_registry, &logger,
-                         &last_frame_ts, &model_engine, &grpc_server, &app, i]
+        socket->onFrame([&sets, &decoders, &proto_registry, &log_controller,
+                         &model_engine, &grpc_server, &app, i]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (f) {
@@ -94,8 +93,8 @@ void run_live(const AppConfig& app) {
                 std::println("--------------------------------------------------");
             }
             if (f) {
-                if (logger) {
-                    log_frame(*f, logger.get(), proto_registry, last_frame_ts);
+                if (log_controller.is_logging()) {
+                    log_controller.log_can_frame(*f);
                 } else if (app.debug_mode) {
                     const std::string desc = proto_registry.describe(*f);
                     if (!desc.empty()) std::println("proto:\n{}", desc);
@@ -107,8 +106,8 @@ void run_live(const AppConfig& app) {
     }
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-    signals.async_wait([&io, &logger](const boost::system::error_code&, int) {
-        logger.reset();
+    signals.async_wait([&io, &log_controller](const boost::system::error_code&, int) {
+        log_controller.stop();
         io.stop();
     });
 

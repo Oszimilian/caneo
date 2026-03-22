@@ -48,8 +48,10 @@ add_executable(caneo
     src/action/ActionPreset.cpp
     src/grpc/CanStreamService.cpp
     src/grpc/CanStreamServer.cpp
+    src/grpc/RemoteLogControl.cpp
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
+    src/logger/LogController.cpp
     src/logger/McapLogger.cpp
     src/logger/McapReader.cpp
     src/model/SignalStore.cpp
