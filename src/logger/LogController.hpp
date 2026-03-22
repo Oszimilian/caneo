@@ -29,8 +29,9 @@ public:
     // Flush and close the current log file. No-op if not active.
     void stop();
 
-    bool        is_logging()    const;
-    std::string current_path()  const;  // empty when not logging
+    bool        is_logging()      const;
+    std::string current_path()    const;  // empty when not logging
+    double      elapsed_seconds() const;  // seconds since start(), 0 if not logging
 
     // Full log-frame pipeline (decode proto, compute update_ratio, write).
     // Thread-safe; called from the asio thread.
@@ -51,6 +52,7 @@ private:
     mutable std::mutex      mutex_;
     std::unique_ptr<Logger> logger_;
     std::string             current_path_;
+    std::chrono::steady_clock::time_point log_start_time_;
 
     // Per-(interface, can_id) last-seen timestamp for update_ratio computation.
     std::map<std::pair<std::string, uint32_t>,

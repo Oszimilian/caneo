@@ -185,10 +185,21 @@ void Gui::run()
                 }
             }
 
-            // ---- log file path (second line, only when active) ----
+            // ---- log file path + duration (second line, only when active) ----
             if (logging) {
-                const std::string path = log_controller_->current_path();
-                ImGui::TextDisabled("%s", path.c_str());
+                const double secs = log_controller_->elapsed_seconds();
+                const int    h    = static_cast<int>(secs) / 3600;
+                const int    m    = (static_cast<int>(secs) % 3600) / 60;
+                const int    s    = static_cast<int>(secs) % 60;
+                if (h > 0)
+                    ImGui::TextDisabled("%02d:%02d:%02d", h, m, s);
+                else
+                    ImGui::TextDisabled("%02d:%02d", m, s);
+                ImGui::SameLine();
+                std::string path = log_controller_->current_path();
+                ImGui::SetNextItemWidth(ImGui::CalcTextSize(path.c_str()).x + ImGui::GetStyle().FramePadding.x * 2);
+                ImGui::InputText("##logpath", path.data(), path.size() + 1,
+                                 ImGuiInputTextFlags_ReadOnly);
             }
 
             ImGui::End();

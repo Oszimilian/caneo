@@ -7,8 +7,9 @@ LogController::LogController(const AppConfig& app, ProtoLogRegistry& proto_regis
 void LogController::start() {
     std::lock_guard lock(mutex_);
     if (logger_) return;
-    current_path_ = app_.make_log_path();
-    logger_        = std::make_unique<McapLogger>(current_path_);
+    current_path_   = app_.make_log_path();
+    logger_         = std::make_unique<McapLogger>(current_path_);
+    log_start_time_ = std::chrono::steady_clock::now();
 }
 
 void LogController::stop() {
@@ -16,6 +17,7 @@ void LogController::stop() {
     logger_.reset();
     current_path_.clear();
     last_ts_.clear();
+    log_start_time_ = {};
 }
 
 bool LogController::is_logging() const {
@@ -26,6 +28,13 @@ bool LogController::is_logging() const {
 std::string LogController::current_path() const {
     std::lock_guard lock(mutex_);
     return current_path_;
+}
+
+double LogController::elapsed_seconds() const {
+    std::lock_guard lock(mutex_);
+    if (!logger_) return 0.0;
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - log_start_time_).count();
 }
 
 void LogController::log_can_frame(const CanFrame& frame) {
