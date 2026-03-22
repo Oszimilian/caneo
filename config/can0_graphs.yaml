@@ -12,4 +12,11 @@
     - msg: SS_ELMO_TARGET
       signal: SS_ELMO_TARGET_LWS
 
+- name: "Bremse"
+  signals:
+    - msg: M01_Brake_Pressure_Rear
+      signal: Brake_Pressure_Rear
+    - msg: M01_Brake_Pressure_Front
+      signal: Brake_Pressure_Front
+
 

@@ -1,4 +1,5 @@
 #include "CanStreamService.hpp"
+#include "logger/LogController.hpp"
 
 #include <chrono>
 
@@ -77,5 +78,34 @@ grpc::Status CanStreamService::Send(grpc::ServerContext*,
     } else {
         result->set_ok(false);
     }
+    return grpc::Status::OK;
+}
+
+static void fill_log_status(caneo::LogStatus* status, LogController* lc) {
+    if (!lc) return;
+    status->set_active(lc->is_logging());
+    status->set_path(lc->current_path());
+}
+
+grpc::Status CanStreamService::StartLog(grpc::ServerContext*,
+                                        const caneo::LogControlRequest*,
+                                        caneo::LogStatus* status) {
+    if (log_controller_) log_controller_->start();
+    fill_log_status(status, log_controller_);
+    return grpc::Status::OK;
+}
+
+grpc::Status CanStreamService::StopLog(grpc::ServerContext*,
+                                       const caneo::LogControlRequest*,
+                                       caneo::LogStatus* status) {
+    if (log_controller_) log_controller_->stop();
+    fill_log_status(status, log_controller_);
+    return grpc::Status::OK;
+}
+
+grpc::Status CanStreamService::GetLogStatus(grpc::ServerContext*,
+                                            const caneo::LogControlRequest*,
+                                            caneo::LogStatus* status) {
+    fill_log_status(status, log_controller_);
     return grpc::Status::OK;
 }

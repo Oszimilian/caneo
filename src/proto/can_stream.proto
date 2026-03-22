@@ -18,7 +18,17 @@ message SendResult {
   bool ok = 1;
 }
 
+message LogControlRequest {}
+
+message LogStatus {
+  bool   active = 1;
+  string path   = 2;
+}
+
 service CanStream {
-  rpc Subscribe(SubscribeRequest) returns (stream RawCanFrame);
-  rpc Send(RawCanFrame) returns (SendResult);
+  rpc Subscribe(SubscribeRequest)  returns (stream RawCanFrame);
+  rpc Send(RawCanFrame)            returns (SendResult);
+  rpc StartLog(LogControlRequest)  returns (LogStatus);
+  rpc StopLog(LogControlRequest)   returns (LogStatus);
+  rpc GetLogStatus(LogControlRequest) returns (LogStatus);
 }
