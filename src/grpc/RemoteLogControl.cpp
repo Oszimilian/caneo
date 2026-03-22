@@ -15,6 +15,7 @@ void RemoteLogControl::start() {
     stub_->StartLog(&ctx, req, &status);
     logging_ = status.active();
     path_    = status.path();
+    if (logging_) log_start_time_ = std::chrono::steady_clock::now();
 }
 
 void RemoteLogControl::stop() {
@@ -32,7 +33,17 @@ void RemoteLogControl::refresh_status() {
     caneo::LogStatus status;
     const auto result = stub_->GetLogStatus(&ctx, req, &status);
     if (result.ok()) {
+        const bool was_logging = logging_;
         logging_ = status.active();
         path_    = status.path();
+        // If the server was already logging when we connected, start the local timer now.
+        if (logging_ && !was_logging)
+            log_start_time_ = std::chrono::steady_clock::now();
     }
+}
+
+double RemoteLogControl::elapsed_seconds() const {
+    if (!logging_) return 0.0;
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - log_start_time_).count();
 }
