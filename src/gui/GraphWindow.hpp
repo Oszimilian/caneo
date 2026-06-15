@@ -73,7 +73,7 @@ private:
 
     std::vector<GraphTab>                  graphs_;
     mutable std::mutex                     mutex_;
-    std::chrono::steady_clock::time_point  start_;
+    std::chrono::system_clock::time_point  start_;
 
     std::optional<PendingSeriesCtx>        pending_series_ctx_;
     bool                                   open_series_ctx_ = false;

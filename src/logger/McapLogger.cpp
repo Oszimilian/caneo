@@ -17,6 +17,16 @@ static uint64_t now_ns() {
         .count());
 }
 
+// Receive time of a frame as ns since the unix epoch. This is the kernel /
+// hardware RX timestamp when SocketCAN could obtain one, otherwise the time the
+// frame object was constructed.
+static uint64_t frame_ns(const CanFrame& frame) {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            frame.timestamp().time_since_epoch())
+        .count());
+}
+
 // ─── Construction ───────────────────────────────────────────────────────────
 
 McapLogger::McapLogger(const std::string& path) {
@@ -157,13 +167,17 @@ std::string McapLogger::serialize_scalar(double value) {
 }
 
 void McapLogger::log_scalar(const std::string& topic, double value) {
+    log_scalar_at(topic, value, now_ns());
+}
+
+void McapLogger::log_scalar_at(const std::string& topic, double value, uint64_t log_time_ns) {
     const auto* desc = get_scalar_descriptor();
     if (!desc) return;
 
     const std::string data     = serialize_scalar(value);
     const mcap::SchemaId  sid  = get_or_register_schema(desc);
     const mcap::ChannelId cid  = get_or_register_channel(topic, sid);
-    const uint64_t ts          = now_ns();
+    const uint64_t ts          = log_time_ns;
 
     mcap::Message msg;
     msg.channelId   = cid;
@@ -248,7 +262,9 @@ void McapLogger::log(const CanFrame& frame,
     const mcap::SchemaId  schema_id  = get_or_register_schema(desc);
     const mcap::ChannelId channel_id = get_or_register_channel(base_topic + "/data", schema_id);
 
-    const uint64_t ts = now_ns();
+    // Use the frame's RX timestamp (kernel/hardware when available) so the log
+    // time reflects when the frame hit the interface, not when we processed it.
+    const uint64_t ts = frame_ns(frame);
 
     mcap::Message msg;
     msg.channelId   = channel_id;
@@ -278,5 +294,5 @@ void McapLogger::log(const CanFrame& frame,
 
     // ── update_ratio channel ─────────────────────────────────────────────────
     if (update_ratio_ms)
-        log_scalar(base_topic + "/update_ratio", *update_ratio_ms);
+        log_scalar_at(base_topic + "/update_ratio", *update_ratio_ms, ts);
 }

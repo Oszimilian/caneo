@@ -56,5 +56,5 @@ private:
 
     // Per-(interface, can_id) last-seen timestamp for update_ratio computation.
     std::map<std::pair<std::string, uint32_t>,
-             std::chrono::steady_clock::time_point> last_ts_;
+             std::chrono::system_clock::time_point> last_ts_;
 };

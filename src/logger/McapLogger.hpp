@@ -27,6 +27,9 @@ public:
     void log_scalar(const std::string& topic, double value) override;
 
 private:
+    // Log a scalar at an explicit log time (ns since unix epoch).
+    void log_scalar_at(const std::string& topic, double value, uint64_t log_time_ns);
+
     mcap::McapWriter writer_;
 
     // topic → channel id  (registered lazily on first message)

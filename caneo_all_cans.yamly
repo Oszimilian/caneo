@@ -1,0 +1,28 @@
+virtual: false
+log_file_path: ~/Dokumente/Logs
+# graphs_preset: config/can0_graphs.yaml
+interfaces:
+  can0:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN1_UASA2310_Inverter_Front.dbc
+    baudrate: 1000000
+    actions: config/ss_elmo_actions.yaml
+
+  can2:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN2_UASA2310_Inverter_Rear.dbc
+    baudrate: 1000000
+
+  can1:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN3_UASA2310_Vehicle_mitnode.dbc
+    baudrate: 1000000
+
+  can3:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN4_UASA2310_Accu.dbc
+    baudrate: 1000000
+
+  can4:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN5_UASA2310_Grossfunk.dbc
+    baudrate: 1000000
+
+  can5:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN6_UASA2310_FWS.dbc
+    baudrate: 1000000

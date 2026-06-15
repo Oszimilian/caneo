@@ -51,9 +51,7 @@ void run_gui(const AppConfig& app)
 
     auto gui = std::make_shared<Gui>(app.config.interfaces, action_handler);
 
-    // Load per-interface graph presets
-    for (const auto& cfg : app.config.interfaces)
-        load_graph_preset(cfg, *gui->graph_window());
+    load_graph_preset(app.config, *gui->graph_window());
 
     ProtoLogRegistry proto_registry;
     for (const auto& cfg : app.config.interfaces)

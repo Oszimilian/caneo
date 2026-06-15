@@ -1,12 +1,12 @@
-virtual: true
+virtual: false
 log_file_path: ~/Dokumente/Logs
+graphs_preset: config/can0_graphs.yaml
 interfaces:
-  vcan0:
-    dbc: config/vcan0.dbc
+  can0:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN3_UASA2310_Vehicle_mitnode.dbc
     baudrate: 1000000
     actions: config/ss_elmo_actions.yaml
-    graphs_preset: config/can0_graphs.yaml
 
-  vcan1:
-    dbc: config/vcan1.dbc
+  can1:
+    dbc: /home/maximilian/Git/datenbasen_2511/CAN5_UASA2310_Grossfunk.dbc
     baudrate: 1000000

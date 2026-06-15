@@ -7,11 +7,12 @@
 #include <unordered_map>
 #include <yaml-cpp/yaml.h>
 
-// Build msg_name → {id, signal_name → {y_min, y_max}} lookup from DBC.
 struct SigInfo { double y_min; double y_max; };
 struct MsgInfo  { uint32_t id; std::unordered_map<std::string, SigInfo> signals; };
 
-static std::unordered_map<std::string, MsgInfo> build_dbc_index(const std::string& dbc_path)
+using DbcIndex = std::unordered_map<std::string, MsgInfo>;
+
+static DbcIndex build_dbc_index(const std::string& dbc_path)
 {
     std::ifstream f(dbc_path);
     if (!f.is_open())
@@ -21,7 +22,7 @@ static std::unordered_map<std::string, MsgInfo> build_dbc_index(const std::strin
     if (!network)
         throw std::runtime_error("GraphPreset: cannot parse DBC: " + dbc_path);
 
-    std::unordered_map<std::string, MsgInfo> index;
+    DbcIndex index;
     for (const dbcppp::IMessage& msg : network->Messages()) {
         MsgInfo mi;
         mi.id = static_cast<uint32_t>(msg.Id());
@@ -32,23 +33,28 @@ static std::unordered_map<std::string, MsgInfo> build_dbc_index(const std::strin
     return index;
 }
 
-void load_graph_preset(const InterfaceConfig& cfg, GraphWindow& graph_window)
+void load_graph_preset(const Config& config, GraphWindow& graph_window)
 {
-    if (cfg.graphs_file.empty())
+    if (config.graphs_file.empty())
         return;
+
+    // Build per-interface DBC index
+    std::unordered_map<std::string, DbcIndex> iface_index;
+    for (const auto& cfg : config.interfaces) {
+        if (cfg.dbc.empty()) continue;
+        iface_index[cfg.name] = build_dbc_index(cfg.dbc);
+    }
 
     YAML::Node root;
     try {
-        root = YAML::LoadFile(cfg.graphs_file);
+        root = YAML::LoadFile(config.graphs_file);
     } catch (const std::exception& e) {
         throw std::runtime_error(
-            std::string("Failed to load graphs preset '") + cfg.graphs_file + "': " + e.what());
+            std::string("Failed to load graphs preset '") + config.graphs_file + "': " + e.what());
     }
 
     if (!root.IsSequence())
         throw std::runtime_error("Graphs preset must be a YAML sequence");
-
-    auto dbc_index = build_dbc_index(cfg.dbc);
 
     for (const auto& graph_node : root) {
         const std::string graph_name = graph_node["name"] ? graph_node["name"].as<std::string>() : "";
@@ -64,16 +70,32 @@ void load_graph_preset(const InterfaceConfig& cfg, GraphWindow& graph_window)
             if (msg_name.empty() || sig_name.empty())
                 continue;
 
-            auto mit = dbc_index.find(msg_name);
-            if (mit == dbc_index.end())
-                continue;
+            const std::string iface_hint = sig_node["interface"] ? sig_node["interface"].as<std::string>() : "";
 
-            const MsgInfo& mi = mit->second;
-            auto sit = mi.signals.find(sig_name);
+            const MsgInfo* mi = nullptr;
+            std::string    resolved_iface;
 
-            double y_min = 0.0;
-            double y_max = 0.0;
-            if (sit != mi.signals.end()) {
+            auto try_iface = [&](const std::string& iface_name) -> bool {
+                auto iit = iface_index.find(iface_name);
+                if (iit == iface_index.end()) return false;
+                auto mit = iit->second.find(msg_name);
+                if (mit == iit->second.end()) return false;
+                mi = &mit->second;
+                resolved_iface = iface_name;
+                return true;
+            };
+
+            if (!iface_hint.empty()) {
+                if (!try_iface(iface_hint))
+                    continue;
+            } else {
+                for (const auto& cfg : config.interfaces)
+                    if (try_iface(cfg.name)) break;
+            }
+            if (!mi) continue;
+
+            double y_min = 0.0, y_max = 0.0;
+            if (auto sit = mi->signals.find(sig_name); sit != mi->signals.end()) {
                 y_min = sit->second.y_min;
                 y_max = sit->second.y_max;
             }
@@ -82,8 +104,8 @@ void load_graph_preset(const InterfaceConfig& cfg, GraphWindow& graph_window)
 
             const int y_axis = sig_node["y_axis"] ? sig_node["y_axis"].as<int>() : 0;
 
-            graph_window.add_signal(graph_idx, cfg.name, mi.id, sig_name, y_min, y_max, y_axis,
-                                    msg_name + "/" + sig_name);
+            graph_window.add_signal(graph_idx, resolved_iface, mi->id, sig_name,
+                                    y_min, y_max, y_axis, msg_name + "/" + sig_name);
         }
     }
 }

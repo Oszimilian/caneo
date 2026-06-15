@@ -25,6 +25,9 @@ static Config parse_config(const YAML::Node& root) {
     if (root["log_file_path"])
         result.log_file_path = expand_path(root["log_file_path"].as<std::string>());
 
+    if (root["graphs_preset"])
+        result.graphs_file = root["graphs_preset"].as<std::string>();
+
     const auto& interfaces = root["interfaces"];
     if (!interfaces)
         throw std::runtime_error("Config: missing 'interfaces' key");
@@ -44,8 +47,6 @@ static Config parse_config(const YAML::Node& root) {
                     cfg.baudrate = entry.second["baudrate"].as<uint32_t>();
                 if (entry.second["actions"])
                     cfg.actions_file = entry.second["actions"].as<std::string>();
-                if (entry.second["graphs_preset"])
-                    cfg.graphs_file = entry.second["graphs_preset"].as<std::string>();
             }
         }
         result.interfaces.push_back(std::move(cfg));

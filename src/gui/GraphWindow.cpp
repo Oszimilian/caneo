@@ -7,7 +7,7 @@
 #include <implot.h>
 
 GraphWindow::GraphWindow()
-    : start_(std::chrono::steady_clock::now())
+    : start_(std::chrono::system_clock::now())
 {}
 
 void GraphWindow::update(const CanFrame& frame)
@@ -36,7 +36,7 @@ void GraphWindow::push_value(const std::string& interface,
                              double             value)
 {
     const double t = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - start_).count();
+        std::chrono::system_clock::now() - start_).count();
 
     std::lock_guard lock(mutex_);
     for (auto& tab : graphs_) {

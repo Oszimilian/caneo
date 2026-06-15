@@ -24,11 +24,13 @@ public:
 
 private:
     void asyncRead();
+    // Reads one frame (with its kernel/hardware RX timestamp) from the socket.
+    // Returns true if a frame was read, false on EAGAIN/error (drain finished).
+    bool readFrame();
 
     boost::asio::io_context& io_;
     boost::asio::posix::stream_descriptor descriptor_;
     std::string interface_;
-    struct can_frame rawFrame_ {};
 };
 
 template <>

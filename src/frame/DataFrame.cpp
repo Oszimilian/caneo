@@ -4,7 +4,7 @@
 
 DataFrame::DataFrame(std::vector<uint8_t> payload)
     : payload_(std::move(payload))
-    , timestamp_(std::chrono::steady_clock::now()) {}
+    , timestamp_(std::chrono::system_clock::now()) {}
 
 const std::vector<uint8_t>& DataFrame::payload() const {
     return payload_;
@@ -14,8 +14,12 @@ const std::vector<DecodedSignal>& DataFrame::decoded() const {
     return decoded_;
 }
 
-std::chrono::steady_clock::time_point DataFrame::timestamp() const {
+std::chrono::system_clock::time_point DataFrame::timestamp() const {
     return timestamp_;
+}
+
+void DataFrame::set_timestamp(std::chrono::system_clock::time_point ts) {
+    timestamp_ = ts;
 }
 
 void DataFrame::addDecoded(DecodedSignal signal) {

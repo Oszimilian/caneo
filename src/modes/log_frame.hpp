@@ -11,7 +11,7 @@
 #include <utility>
 
 using FrameTimestampMap =
-    std::map<std::pair<std::string, uint32_t>, std::chrono::steady_clock::time_point>;
+    std::map<std::pair<std::string, uint32_t>, std::chrono::system_clock::time_point>;
 
 inline void log_frame(const CanFrame& frame,
                       Logger* logger,

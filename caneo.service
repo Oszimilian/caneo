@@ -1,0 +1,38 @@
+[Unit]
+Description=caneo CAN logger (headless --log)
+After=network.target
+# Bei wiederholten Fehlern nicht endlos hammern
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Als eigener User laufen lassen, damit ~/Dokumente/Logs (log_file_path)
+# und die DBC-Dateien im Home korrekt aufgeloest werden.
+User=maximilian
+Group=maximilian
+Environment=HOME=/home/maximilian
+WorkingDirectory=/home/maximilian/Git/caneo
+
+# CAN-Interfaces VOR caneo als root hochfahren ('+' = mit vollen Rechten,
+# ignoriert User=). Damit sieht caneo sie als "up" und ruft kein sudo mehr auf.
+ExecStartPre=+/usr/local/bin/caneo-can-up.sh
+
+# Binary liegt in /usr/local/bin (bin_t-Context) -> SELinux erlaubt das Ausfuehren.
+# Nach jedem Rebuild: sudo cp build/caneo /usr/local/bin/caneo
+ExecStart=/usr/local/bin/caneo --log --config /home/maximilian/Git/caneo/caneo.yaml
+
+# caneo selbst braucht nur Raw-CAN-Sockets (Interfaces sind ja schon up).
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# Sauberes Stoppen: caneo faengt SIGTERM ab und flusht das mcap-Log
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -184,7 +184,7 @@ BO_ 259 SS_ELMO_STATUS: 8 SS_ELMO
  SG_ SS_ELMO_STATUS_CONFIG_INVALID : 15|1@1- (1,0) [0|0] ""  SS_ELMO
 
 BO_ 488 Air_Pressure_front: 5 Vector__XXX
- SG_ Pressure : 0|32@1- (1E-005,0) [0|0] "" Vector__XXX
+ SG_ Brake_Pressure_Rear : 0|32@1- (1E-005,-0) [-21474.83648|21474.83647] "bar" Vector__XXX
 
 BO_ 380 IMU_Tx_Standard_031: 8 Vector__XXX
  SG_ Acceleration_Az : 32|16@1+ (0.0001274,-4.17464) [-4.17464|4.174519] "g" Vector__XXX
@@ -380,7 +380,7 @@ BO_ 132 M01_Brake_Error_Front: 3 BrakePressure_Front
 BO_ 395 RFC4800_APPS_L: 8 RFC4800_APPS_L
  SG_ APPS_L_Position : 0|32@1- (1,0) [-2147483648|2147483647] ""  Hauptsteuereinheit
 
-BO_ 387 RFC4800_APPS_R: 8 RFC4800_APPS_R
+BO_ 387 RFC4800_APPS_R: 6 RFC4800_APPS_R
  SG_ APPS_R_Position : 0|32@1- (1,0) [-2147483648|2147483647] ""  Hauptsteuereinheit
 
 BO_ 386 RFC4800_BPPS: 8 RFC4800_BPPS
@@ -593,7 +593,7 @@ BO_ 0 NMT_Start: 2 Vector__XXX
  SG_ NMT_StartSignal : 0|8@1+ (1,0) [0|0] "" Vector__XXX
 
 BO_ 489 Air_Pressure_rear: 5 Vector__XXX
- SG_ Pressure : 0|32@1- (1E-005,0) [0|0] ""  ETAS
+ SG_ Brake_Pressure_Rear : 0|32@1- (1E-005,-0) [-21474.83648|21474.83647] "bar" Vector__XXX
 
 BO_ 897 TxPDO3: 8 Vector__XXX
  SG_ Warn_ApplicationWarnFlag : 15|1@1+ (1,0) [0|0] "" Vector__XXX

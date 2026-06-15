@@ -1,6 +1,6 @@
 - type: periodic                                                                                                                                                                                                                            
   msg: SS_ELMO_CONFIG                                                                                                                                                                                                                          
-  period_ms: 100                                                                                                                                                                                                                            
+  period_ms: 1                                                                                                                                                                                                                            
   signals:                                                                                                                                                                                                                                  
     SS_ELMO_STATUS_LWS_MAX: 13000
     SS_ELMO_STATUS_LWS_MIN: 3000
@@ -9,7 +9,7 @@
 
 - type: periodic                                                                                                                                                                                                                            
   msg: SS_ELMO_STATE                                                                                                                                                                                                                          
-  period_ms: 100                                                                                                                                                                                                                            
+  period_ms: 1                                                                                                                                                                                                                            
   signals:                                                                                                                                                                                                                                  
     SS_ELMO_RUN: 1                                                                                                                                                                                                                  
                                                                                                                                                                                                                                               
@@ -19,6 +19,47 @@
   amplitude: 2000.0                                                                                                                                                                                                                         
   offset: 6000.0                                          
   sin_period_ms: 2000                                                                                                                                                                                                                       
-  interval_ms: 10                                                                                                                                                                                                                           
-#  signals:           # optional: other signals set to fixed values                                                                                                                                                                          
-#    OtherSignal: 1.0
+  interval_ms: 1 
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: RFC4800_APPS_R                                                                                                                                                                                                                          
+  period_ms: 1                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    APPS_R_Position: 1                                                                                                                                                                                                                               
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: RFC4800_APPS_L                                                                                                                                                                                                                        
+  period_ms: 1                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    APPS_L_Position: 1       
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: SS_ELMO_TARGET                                                                                                                                                                                                                        
+  period_ms: 1                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    SS_ELMO_TARGET_LWS: 1                                                                                                                                                                                                                              
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: T01_L                                                                                                                                                                                                                        
+  period_ms: 1                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    T01_Temp_Left: 1
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: T01_R                                                                                                                                                                                                                       
+  period_ms: 1                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    T01_Temp_Right: 1   
+
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: Air_Pressure_front                                                                                                                                                                                                                       
+  period_ms: 5                                                                                                                                                                                                                            
+  signals:                                                                                                                                                                                                                                  
+    Pressure: 1
+
+- type: periodic                                                                                                                                                                                                                            
+  msg: Air_Pressure_rear                                                                                                                                                                                                                   
+  period_ms: 5                                                                                                                                                                                                                           
+  signals:                                                                                                                                                                                                                                  
+    Pressure: 5

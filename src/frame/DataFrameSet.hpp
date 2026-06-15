@@ -19,14 +19,14 @@ public:
     const std::string& interface() const;
     std::size_t size() const;
     const std::map<uint32_t, CanFrame>& frames() const;
-    std::optional<std::chrono::steady_clock::duration> delta(uint32_t id) const;
+    std::optional<std::chrono::system_clock::duration> delta(uint32_t id) const;
 
     friend std::ostream& operator<<(std::ostream& os, const DataFrameSet& set);
 
 private:
     std::string interface_;
     std::map<uint32_t, CanFrame> frames_;
-    std::map<uint32_t, std::chrono::steady_clock::duration> deltas_;
+    std::map<uint32_t, std::chrono::system_clock::duration> deltas_;
 };
 
 template <>

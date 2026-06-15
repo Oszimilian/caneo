@@ -36,7 +36,7 @@ const std::map<uint32_t, CanFrame>& DataFrameSet::frames() const {
     return frames_;
 }
 
-std::optional<std::chrono::steady_clock::duration> DataFrameSet::delta(uint32_t id) const {
+std::optional<std::chrono::system_clock::duration> DataFrameSet::delta(uint32_t id) const {
     if (const auto it = deltas_.find(id); it != deltas_.end())
         return it->second;
     return std::nullopt;

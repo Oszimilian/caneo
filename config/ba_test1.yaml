@@ -1,0 +1,11 @@
+- name: "SS_ELMO_TARGET1"
+  signals:
+    - msg: SS_ELMO_TARGET
+      signal: SS_ELMO_TARGET_LWS
+      y_axis: 1
+    - msg: SS_ELMO_TARGET
+      signal: SS_ELMO_TARGET_LWS
+      y_axis: 2
+    - msg: SS_ELMO_TARGET
+      signal: SS_ELMO_TARGET_LWS
+      y_axis: 3
