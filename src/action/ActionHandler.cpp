@@ -62,10 +62,12 @@ void ActionHandler::update_sin_param(std::size_t idx, int param, double value) {
         if (idx >= actions_.size()) return;
         auto* s = dynamic_cast<SinPeriodicAction*>(actions_[idx].get());
         if (!s) return;
+        auto& spec = s->spec_ref();
         switch (param) {
-            case 0: s->set_amplitude(value); break;
-            case 1: s->set_sin_period(std::chrono::milliseconds(static_cast<long>(value))); break;
-            case 2: s->set_offset(value); break;
+            case 0: s->set_amplitude(value); spec.amplitude = value; break;
+            case 1: s->set_sin_period(std::chrono::milliseconds(static_cast<long>(value)));
+                    spec.sin_period_ms = static_cast<int>(value); break;
+            case 2: s->set_offset(value); spec.offset = value; break;
         }
         rebuild_snapshot();
     });
@@ -75,6 +77,40 @@ void ActionHandler::update_payload(std::size_t idx, std::vector<uint8_t> payload
     boost::asio::post(io_, [this, idx, p = std::move(payload)]() mutable {
         if (idx < actions_.size())
             actions_[idx]->set_payload(std::move(p));
+    });
+}
+
+void ActionHandler::set_all_paused(bool paused) {
+    boost::asio::post(io_, [this, paused] {
+        for (auto& a : actions_) {
+            if (!a->is_periodic() || a->is_paused() == paused) continue;
+            if (paused) a->pause();
+            else        a->resume();
+        }
+        rebuild_snapshot();
+    });
+}
+
+void ActionHandler::replace_action(std::size_t idx, std::unique_ptr<Action> action) {
+    boost::asio::post(io_, [this, idx, a = std::move(action)]() mutable {
+        if (idx >= actions_.size()) return;
+        const bool was_paused = actions_[idx]->is_paused();
+        actions_[idx]->cancel();
+        auto* ptr = a.get();
+        actions_[idx] = std::move(a);
+        ptr->start(
+            [this]      { on_action_fired(); },
+            [this, ptr] { on_action_done(ptr); });
+        if (was_paused) ptr->pause();
+        rebuild_snapshot();
+    });
+}
+
+void ActionHandler::clear() {
+    boost::asio::post(io_, [this] {
+        for (auto& a : actions_) a->cancel();
+        actions_.clear();
+        rebuild_snapshot();
     });
 }
 
@@ -101,12 +137,15 @@ void ActionHandler::rebuild_snapshot() {
             .interface   = actions_[i]->interface(),
             .is_periodic = actions_[i]->is_periodic(),
             .paused      = actions_[i]->is_paused(),
+            .paused_at   = actions_[i]->paused_at(),
             .sin_amplitude = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->amplitude()          : 0.0; }(),
             .sin_period_ms = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->sin_period().count() : 0L;  }(),
             .sin_offset    = [&]{ auto* s = dynamic_cast<SinPeriodicAction*>(actions_[i].get()); return s ? s->offset()             : 0.0; }(),
             .period      = actions_[i]->period(),
             .last_sent   = actions_[i]->last_sent(),
             .ever_sent   = actions_[i]->ever_sent(),
+            .spec        = actions_[i]->spec(),
+            .log         = actions_[i]->log(),
         });
     }
     {

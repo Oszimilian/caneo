@@ -171,6 +171,10 @@ bool SocketCAN::readFrame() {
 void SocketCAN::send(uint64_t id, const std::vector<uint8_t>& data) {
     struct can_frame frame{};
     frame.can_id  = static_cast<canid_t>(id & CAN_EFF_MASK);
+    // Received frames carry the ID without flags; anything above 11 bit must
+    // be sent as an extended frame, or the kernel truncates it to 11 bit.
+    if (frame.can_id > CAN_SFF_MASK)
+        frame.can_id |= CAN_EFF_FLAG;
     frame.can_dlc = static_cast<uint8_t>(std::min(data.size(), std::size_t{8}));
     std::copy_n(data.begin(), frame.can_dlc, frame.data);
     boost::asio::write(descriptor_, boost::asio::buffer(&frame, sizeof(frame)));

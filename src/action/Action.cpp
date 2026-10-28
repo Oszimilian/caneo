@@ -3,6 +3,38 @@
 #include <cmath>
 #include <numbers>
 
+// ─── ActionLog ──────────────────────────────────────────────────────────────
+
+void ActionLog::append(std::string line) {
+    std::lock_guard lock(mutex_);
+    lines_.push_back(std::move(line));
+    while (lines_.size() > MAX_LINES)
+        lines_.pop_front();
+}
+
+void ActionLog::set_error(std::string error) {
+    std::lock_guard lock(mutex_);
+    error_ = std::move(error);
+}
+
+void ActionLog::clear() {
+    std::lock_guard lock(mutex_);
+    lines_.clear();
+    error_.clear();
+}
+
+std::vector<std::string> ActionLog::lines() const {
+    std::lock_guard lock(mutex_);
+    return {lines_.begin(), lines_.end()};
+}
+
+std::string ActionLog::error() const {
+    std::lock_guard lock(mutex_);
+    return error_;
+}
+
+// ─── Action ─────────────────────────────────────────────────────────────────
+
 Action::Action(boost::asio::io_context& io,
                std::string              interface,
                uint64_t                 msg_id,
@@ -28,6 +60,8 @@ void Action::cancel() {
 }
 
 void Action::pause() {
+    if (!paused_)
+        paused_at_ = std::chrono::steady_clock::now();
     paused_ = true;
     timer_.cancel();
 }

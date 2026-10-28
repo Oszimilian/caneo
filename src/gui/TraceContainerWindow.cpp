@@ -7,6 +7,12 @@ void TraceContainerWindow::add(std::unique_ptr<TraceWindow> tw)
     traces_.push_back(std::move(tw));
 }
 
+void TraceContainerWindow::set_add_guard_callback(TraceWindow::AddGuardFn cb)
+{
+    for (auto& t : traces_)
+        t->set_add_guard_callback(cb);
+}
+
 void TraceContainerWindow::update(const CanFrame& frame)
 {
     for (auto& t : traces_)
@@ -15,10 +21,13 @@ void TraceContainerWindow::update(const CanFrame& frame)
 
 void TraceContainerWindow::render()
 {
-    ImGui::Begin("Trace");
+    if (!ImGui::Begin(title(), &visible)) {
+        ImGui::End();
+        return;
+    }
 
-    if (traces_.size() == 1) {
-        traces_[0]->render_content();
+    if (traces_.empty()) {
+        ImGui::TextDisabled("No interfaces configured - add one in Settings.");
     } else if (ImGui::BeginTabBar("##trace_ifaces")) {
         for (auto& t : traces_) {
             if (ImGui::BeginTabItem(t->interface_name().c_str())) {

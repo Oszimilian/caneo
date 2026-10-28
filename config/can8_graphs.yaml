@@ -1,0 +1,6 @@
+- name: "Federweg"
+  signals:
+      - msg: damper_sensor_rear
+        signal: damper_rear_ch2
+      - msg: damper_sensor_front
+        signal: damper_front_ch0

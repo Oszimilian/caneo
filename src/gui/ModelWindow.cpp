@@ -22,7 +22,10 @@ void ModelWindow::push(const std::string& name, double value)
 
 void ModelWindow::render()
 {
-    ImGui::Begin("Model");
+    if (!ImGui::Begin(title(), &visible)) {
+        ImGui::End();
+        return;
+    }
 
     {
         std::lock_guard lock(mutex_);
@@ -80,7 +83,7 @@ void ModelWindow::render()
                     for (int a = 0; a < 3; ++a) {
                         const char* lbl[] = { "Y1", "Y2", "Y3" };
                         if (ImGui::MenuItem(lbl[a])) {
-                            graph_window_->add_signal(i, IFACE, 0, *ctx_name_, 0.0, 0.0, a);
+                            graph_window_->add_signal(i, IFACE, 0, {}, *ctx_name_, 0.0, 0.0, a);
                             ctx_name_.reset();
                         }
                     }
@@ -94,7 +97,7 @@ void ModelWindow::render()
                     const char* lbl[] = { "Y1", "Y2", "Y3" };
                     if (ImGui::MenuItem(lbl[a])) {
                         const size_t idx = graph_window_->add_graph();
-                        graph_window_->add_signal(idx, IFACE, 0, *ctx_name_, 0.0, 0.0, a);
+                        graph_window_->add_signal(idx, IFACE, 0, {}, *ctx_name_, 0.0, 0.0, a);
                         ctx_name_.reset();
                     }
                 }

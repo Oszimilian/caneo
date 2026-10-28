@@ -18,6 +18,7 @@ struct ActionInfo {
     std::string                           interface;
     bool                                  is_periodic;
     bool                                  paused;
+    std::chrono::steady_clock::time_point paused_at;   // valid while paused
     // Sin-specific (only valid when type_name == "Sin")
     double                                sin_amplitude = 0;
     long                                  sin_period_ms = 0;
@@ -25,6 +26,8 @@ struct ActionInfo {
     std::chrono::milliseconds             period;
     std::chrono::steady_clock::time_point last_sent;
     bool                                  ever_sent;
+    ActionSpec                            spec;   // empty type = not saveable
+    std::shared_ptr<ActionLog>            log;
 };
 
 class ActionHandler {
@@ -38,6 +41,12 @@ public:
     void toggle_pause(std::size_t idx);
     void update_sin_param(std::size_t idx, int param, double value); // param: 0=amplitude 1=period 2=offset
     void update_payload(std::size_t idx, std::vector<uint8_t> payload);
+    void set_all_paused(bool paused);
+    // Swaps the action at idx for a new one (e.g. after editing its spec or
+    // reloading its Lua script). The paused state of the old action is kept.
+    void replace_action(std::size_t idx, std::unique_ptr<Action> action);
+    // Removes every action.
+    void clear();
 
     // Accessors for constructing Action objects
     boost::asio::io_context& io_ref()      { return io_; }

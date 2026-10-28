@@ -37,7 +37,8 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
     const std::vector<std::string> iface_args(argv + 1, argv + argc);
 
     if (!FLAGS_config.empty()) {
-        app.config = load_config(FLAGS_config);
+        app.config_path = FLAGS_config;
+        app.config      = load_config(FLAGS_config);
     } else if (iface_args.empty()) {
         if (auto cfg = try_load_default_config())
             app.config = std::move(*cfg);
@@ -55,13 +56,32 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
     return app;
 }
 
-std::string AppConfig::make_log_path() const {
+std::string AppConfig::log_file_name() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
     char name[32];
     std::strftime(name, sizeof(name), "caneo_%Y%m%d_%H%M%S.mcap", std::localtime(&t));
+    return name;
+}
 
-    std::filesystem::path dir = config.log_file_path.value_or(std::filesystem::current_path());
+std::string AppConfig::make_log_path() const {
+    const std::string name = log_file_name();
+
+    std::filesystem::path dir = config.log_dir().value_or(std::filesystem::current_path());
     std::filesystem::create_directories(dir);
     return (dir / name).string();
+}
+
+std::vector<std::string> AppConfig::restart_args() const {
+    std::vector<std::string> args{"caneo"};
+    if (tui_mode)            args.emplace_back("--tui");
+    if (gui_mode)            args.emplace_back("--gui");
+    if (log_mode)            args.emplace_back("--log");
+    if (debug_mode)          args.emplace_back("--debug");
+    if (grpc_server)         args.emplace_back("--grpc_server");
+    if (!grpc_client.empty()) args.push_back("--grpc_client=" + grpc_client);
+    args.push_back("--grpc_port=" + std::to_string(grpc_port));
+    if (!model_path.empty()) args.push_back("--model=" + model_path);
+    args.push_back("--config=" + config_path);
+    return args;
 }

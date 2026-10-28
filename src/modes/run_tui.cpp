@@ -1,18 +1,18 @@
 #include "run_tui.hpp"
-#include "log_frame.hpp"
 
 #include "action/ActionHandler.hpp"
-#include "action/ActionPreset.hpp"
+#include "action/ActionFactory.hpp"
 #include "compat/print.hpp"
 #include "decoder/DecoderRegistry.hpp"
 #include "frame/CanFrame.hpp"
 #include "frame/DataFrame.hpp"
 #include "gui/TuiDataFrameSet.hpp"
-#include "logger/McapLogger.hpp"
+#include "logger/LogController.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "grpc/CanStreamServer.hpp"
+#include "guard/GuardEngine.hpp"
 #include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
 #include "socket/SocketGrpc.hpp"
@@ -42,20 +42,26 @@ void run_tui(const AppConfig& app) {
 
     ActionHandler action_handler(io, send_fn);
 
-    // Load per-interface action presets (all start paused)
-    for (const auto& cfg : app.config.interfaces)
-        load_action_presets(cfg, action_handler);
+    // Actions from the config (paused unless saved as running)
+    ActionFactory action_factory(action_handler);
+    action_factory.set_interfaces(app.config.interfaces);
+    for (const auto& err : action_factory.add_all(app.config.interfaces).errors)
+        std::println(stderr, "Action skipped: {}", err);
 
     auto tui = std::make_shared<TuiDataFrameSet>(app.config.interfaces, action_handler);
 
     ProtoLogRegistry proto_registry;
-    std::unique_ptr<Logger> logger;
-    if (app.log_mode) {
-        for (const auto& cfg : app.config.interfaces)
-            if (!cfg.dbc.empty())
-                proto_registry.add_interface(cfg.name, cfg.dbc);
-        logger = std::make_unique<McapLogger>(app.make_log_path());
-    }
+    for (const auto& cfg : app.config.interfaces)
+        if (!cfg.dbc.empty())
+            proto_registry.add_interface(cfg.name, cfg.dbc);
+    // MCAP and/or BLF depending on logging.format
+    LogController log_controller(app, proto_registry);
+    log_controller.set_verbose(false);   // stdout belongs to ftxui
+    if (app.log_mode)
+        log_controller.start();
+    tui->set_log_control(&log_controller, &app.config);
+    tui->set_graphs(app.config.graphs);
+    LogController* logger = &log_controller;
 
     std::unique_ptr<CanStreamServer> grpc_server;
     if (app.grpc_server) {
@@ -63,16 +69,24 @@ void run_tui(const AppConfig& app) {
         grpc_server->set_send_fn(send_fn);
     }
 
-    FrameTimestampMap last_frame_ts;
     SignalStore signal_store;
     std::unique_ptr<ModelEngine> model_engine;
     if (!app.model_path.empty()) {
-        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger.get());
+        model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, logger);
         tui->enable_model_tab();
         model_engine->set_output_callback([tui](const std::string& name, double value) {
             tui->push_model_output(name, value);
         });
     }
+
+    // Guards: Guards tab ('g') + outputs logged as guard/<name>/<output>
+    GuardEngine guard_engine(io, &signal_store);
+    tui->set_guard_engine(&guard_engine);
+    guard_engine.set_output_fn([logger, tui](const std::string& guard, const std::string& output, double v) {
+        logger->log_scalar("guard/" + guard + "/" + output, v);
+        tui->push_guard_output(guard, output, v);
+    });
+    guard_engine.add_all(app.config.guards);
 
     for (const auto& cfg : app.config.interfaces) {
         if (!cfg.dbc.empty())
@@ -88,16 +102,17 @@ void run_tui(const AppConfig& app) {
             sock.reset(gs);
         }
         auto& socket = sockets.emplace_back(std::move(sock));
-        socket->onFrame([tui, &decoders, &proto_registry, &logger,
-                         &last_frame_ts, &model_engine, &grpc_server]
+        socket->onFrame([tui, &decoders, logger, &model_engine, &grpc_server, &signal_store, &guard_engine]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (!f) return;
             if (grpc_server) grpc_server->broadcast(*f);
             try { decoders.decode(*f); } catch (const std::runtime_error&) {}
             tui->update(*f);
-            if (model_engine) model_engine->on_frame(*f);
-            log_frame(*f, logger.get(), proto_registry, last_frame_ts);
+            if (model_engine) model_engine->on_frame(*f);   // updates signal_store too
+            else              signal_store.update(*f);
+            guard_engine.on_frame(*f);
+            logger->log_can_frame(*f);
         });
         socket->start();
     }
@@ -122,5 +137,5 @@ void run_tui(const AppConfig& app) {
     work_guard.reset();
     io.stop();
     asio_thread.join();
-    logger.reset();
+    log_controller.stop();
 }

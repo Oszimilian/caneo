@@ -16,10 +16,11 @@ public:
     // Thread-safe: called from asio thread for each named model output.
     void push(const std::string& name, double value);
 
+    const char* title() const override { return "Model"; }
     void render() override;
 
 private:
-    static constexpr const char* IFACE = "__model__";
+    static constexpr const char* IFACE = GraphWindow::MODEL_IFACE;
 
     GraphWindow*                               graph_window_;
     mutable std::mutex                         mutex_;

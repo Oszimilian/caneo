@@ -29,17 +29,33 @@ static uint64_t frame_ns(const CanFrame& frame) {
 
 // ─── Construction ───────────────────────────────────────────────────────────
 
-McapLogger::McapLogger(const std::string& path) {
+McapLogger::McapLogger(const std::string& path, LogOptions options)
+    : options_(options), last_flush_ns_(now_ns())
+{
     mcap::McapWriterOptions opts("");  // profile = ""
     const auto status = writer_.open(path, opts);
     if (!status.ok())
         throw std::runtime_error("McapLogger: cannot open file: " + path +
                                  " (" + std::string(status.message) + ")");
-    std::println("McapLogger: writing to {}", path);
 }
 
 McapLogger::~McapLogger() {
     writer_.close();
+}
+
+void McapLogger::flush() {
+    writer_.closeLastChunk();
+    if (auto* sink = writer_.dataSink())
+        sink->flush();
+}
+
+void McapLogger::maybe_flush(uint64_t now) {
+    if (options_.flush_s <= 0)
+        return;
+    if (now - last_flush_ns_ >= static_cast<uint64_t>(options_.flush_s) * 1'000'000'000ULL) {
+        flush();
+        last_flush_ns_ = now;
+    }
 }
 
 // ─── Schema / channel registration ─────────────────────────────────────────
@@ -189,6 +205,7 @@ void McapLogger::log_scalar_at(const std::string& topic, double value, uint64_t 
 
     if (const auto status = writer_.write(msg); !status.ok())
         std::println(stderr, "McapLogger: log_scalar write error: {}", status.message);
+    maybe_flush(now_ns());
 }
 
 // ─── Raw frame schema (RawFrame) ────────────────────────────────────────────
@@ -247,6 +264,20 @@ void McapLogger::log(const CanFrame& frame,
                      const std::string& serialized,
                      std::optional<double> update_ratio_ms)
 {
+    // Use the frame's RX timestamp (kernel/hardware when available) so the log
+    // time reflects when the frame hit the interface, not when we processed it.
+    const uint64_t ts = frame_ns(frame);
+
+    // Optional down-sampling per CAN ID (update_ratio still reports the real
+    // frame period because it is computed by the caller on every frame).
+    if (options_.min_interval_ms > 0) {
+        auto& last = last_logged_ns_[{frame.header().interface, frame.header().id}];
+        const uint64_t min_ns = static_cast<uint64_t>(options_.min_interval_ms) * 1'000'000ULL;
+        if (last != 0 && ts >= last && ts - last < min_ns)
+            return;
+        last = ts;
+    }
+
     const std::string base_topic = descriptor
         ? frame.header().interface + "/" + descriptor->name()
         : frame.header().interface + "/" + std::format("0x{:03X}", frame.header().id);
@@ -262,10 +293,6 @@ void McapLogger::log(const CanFrame& frame,
     const mcap::SchemaId  schema_id  = get_or_register_schema(desc);
     const mcap::ChannelId channel_id = get_or_register_channel(base_topic + "/data", schema_id);
 
-    // Use the frame's RX timestamp (kernel/hardware when available) so the log
-    // time reflects when the frame hit the interface, not when we processed it.
-    const uint64_t ts = frame_ns(frame);
-
     mcap::Message msg;
     msg.channelId   = channel_id;
     msg.sequence    = 0;
@@ -278,7 +305,7 @@ void McapLogger::log(const CanFrame& frame,
         std::println(stderr, "McapLogger: write error: {}", status.message);
 
     // ── raw channel (for playback) ────────────────────────────────────────────
-    if (const auto* raw_desc = get_raw_descriptor()) {
+    if (const auto* raw_desc = options_.raw ? get_raw_descriptor() : nullptr) {
         const std::string raw_data = serialize_raw(frame);
         const mcap::SchemaId  raw_sid = get_or_register_schema(raw_desc);
         const mcap::ChannelId raw_cid = get_or_register_channel(base_topic + "/raw", raw_sid);
@@ -293,6 +320,8 @@ void McapLogger::log(const CanFrame& frame,
     }
 
     // ── update_ratio channel ─────────────────────────────────────────────────
-    if (update_ratio_ms)
+    if (update_ratio_ms && options_.update_ratio)
         log_scalar_at(base_topic + "/update_ratio", *update_ratio_ms, ts);
+
+    maybe_flush(now_ns());
 }

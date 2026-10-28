@@ -28,6 +28,7 @@ static bool matches(uint32_t id, const CanFrame& frame, const std::string& q) {
 
 TraceWindow::TraceWindow(std::string interface_name, GraphWindow& graph_window)
     : set_(std::move(interface_name)), graph_window_(&graph_window)
+    , title_(std::format("Trace - {}", set_.interface()))
 {}
 
 void TraceWindow::update(const CanFrame& frame)
@@ -42,9 +43,8 @@ const std::string& TraceWindow::interface_name() const { return set_.interface()
 
 void TraceWindow::render()
 {
-    const std::string title = std::format("Trace — {}", set_.interface());
-    ImGui::Begin(title.c_str());
-    render_content();
+    if (ImGui::Begin(title(), &visible))
+        render_content();
     ImGui::End();
 }
 
@@ -111,7 +111,7 @@ void TraceWindow::render_content()
                 const auto  lbl0 = std::format("{}: {:.2f} {}##{}_0", s0.name, s0.value, s0.unit, id);
                 ImGui::Selectable(lbl0.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
                 if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-                    ctx_signal_     = { id, s0.name, s0.min_val, s0.max_val };
+                    ctx_signal_     = { id, frame.msg_name(), s0.name, s0.min_val, s0.max_val };
                     open_ctx_popup_ = true;
                 }
 
@@ -124,7 +124,7 @@ void TraceWindow::render_content()
                     const auto  lbl = std::format("{}: {:.2f} {}##{}_{}", s.name, s.value, s.unit, id, i);
                     ImGui::Selectable(lbl.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
                     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-                        ctx_signal_     = { id, s.name, s.min_val, s.max_val };
+                        ctx_signal_     = { id, frame.msg_name(), s.name, s.min_val, s.max_val };
                         open_ctx_popup_ = true;
                     }
                     ImGui::Unindent(12.f);
@@ -152,6 +152,7 @@ void TraceWindow::render_content()
                         if (ImGui::MenuItem(lbl[a])) {
                             graph_window_->add_signal(i, set_.interface(),
                                                       ctx_signal_->msg_id,
+                                                      ctx_signal_->msg_name,
                                                       ctx_signal_->signal_name,
                                                       ctx_signal_->y_min,
                                                       ctx_signal_->y_max, a);
@@ -170,6 +171,7 @@ void TraceWindow::render_content()
                         const size_t idx = graph_window_->add_graph();
                         graph_window_->add_signal(idx, set_.interface(),
                                                   ctx_signal_->msg_id,
+                                                  ctx_signal_->msg_name,
                                                   ctx_signal_->signal_name,
                                                   ctx_signal_->y_min,
                                                   ctx_signal_->y_max, a);
@@ -177,6 +179,15 @@ void TraceWindow::render_content()
                     }
                 }
                 ImGui::EndMenu();
+            }
+            if (ctx_signal_ && add_guard_cb_) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Add guard...")) {
+                    add_guard_cb_(set_.interface(), ctx_signal_->msg_name, ctx_signal_->signal_name);
+                    ctx_signal_.reset();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Watch this signal with a Lua script");
             }
         }
         ImGui::EndPopup();

@@ -6,6 +6,7 @@
 #include "frame/DataFrame.hpp"
 #include "frame/DataFrameSet.hpp"
 #include "grpc/CanStreamServer.hpp"
+#include "guard/GuardEngine.hpp"
 #include "logger/LogController.hpp"
 #include "model/ModelEngine.hpp"
 #include "model/SignalStore.hpp"
@@ -65,6 +66,16 @@ void run_live(const AppConfig& app) {
     if (!app.model_path.empty())
         model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, &log_controller);
 
+    // Guards: outputs go into the log (guard/<name>/<output>).
+    GuardEngine guard_engine(io, &signal_store);
+    guard_engine.set_output_fn([&log_controller, &app](const std::string& guard, const std::string& output, double v) {
+        log_controller.log_scalar("guard/" + guard + "/" + output, v);
+        if (app.debug_mode) std::println("guard {}: {} = {}", guard, output, v);
+    });
+    guard_engine.add_all(app.config.guards);
+    if (!app.config.guards.empty())
+        std::println("{} guard(s) active", app.config.guards.size());
+
     for (std::size_t i = 0; i < sets.size(); ++i) {
         std::unique_ptr<Socket> sock;
         if (app.grpc_client.empty()) {
@@ -79,14 +90,16 @@ void run_live(const AppConfig& app) {
         auto& socket = sockets.emplace_back(std::move(sock));
 
         socket->onFrame([&sets, &decoders, &proto_registry, &log_controller,
-                         &model_engine, &grpc_server, &app, i]
+                         &model_engine, &grpc_server, &app, &signal_store, &guard_engine, i]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (f) {
                 if (grpc_server) grpc_server->broadcast(*f);
                 try { decoders.decode(*f); } catch (const std::runtime_error&) {}
                 sets[i].update(*f);
-                if (model_engine) model_engine->on_frame(*f);
+                if (model_engine) model_engine->on_frame(*f);   // updates signal_store too
+                else              signal_store.update(*f);
+                guard_engine.on_frame(*f);
             }
             if (app.debug_mode) {
                 for (const auto& set : sets) std::println("{}", set);

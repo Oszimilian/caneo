@@ -6,15 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A CAN bus visualization and send tool written in C++23.
 
 # Build system
-- CMake + Conan 2
-- All dependencies are managed via Conan 2 (no system-installed libs)
-- Key dependencies: `boost::asio` (async socket I/O), `dbcppp` (DBC decoding), `ftxui` (TUI), `yaml-cpp` (config)
+- CMake + Conan 2; details in `docs/building.md`
+- Dependencies via Conan 2 (no system-installed libs), except **Dear ImGui (docking branch) + ImPlot**,
+  which `cmake/ImGui.cmake` fetches with FetchContent (conan's imgui has no docking)
+- Key dependencies: `boost::asio`, `dbcppp`, `ftxui`, `yaml-cpp`, `sol2`/Lua, gRPC, mcap, imgui/implot/glfw
+- dbcppp does not build with GCC >= 14 -> build in Docker (Ubuntu 24.04, GCC 13)
 
 ## Build commands
 ```bash
-conan install . --output-folder=build --build=missing
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+./docker-build.sh                 # build/caneo (conan cache in docker volume caneo-conan-amd64)
+./docker-build.sh --arch arm64    # build-arm64/caneo via QEMU
 ```
 
 # C++ conventions
@@ -27,11 +28,13 @@ cmake --build build
 # Architecture
 
 ## Config (`src/config/`)
-- `Config` — top-level struct: `bool virtual_can` + `std::vector<InterfaceConfig>`
-- `InterfaceConfig` — per-interface: `name`, `dbc` (path, may be empty), `baudrate` (0 = not set)
-- Supports two YAML formats:
-  - Old: `interfaces: { vcan0: dbc/file.dbc }` (scalar value)
-  - New (`caneo.yaml`): top-level `virtual:` flag + per-interface map with `dbc` and `baudrate`
+- `Config` — `virtual_can`, `log_file_path` (raw, `log_dir()` expands `~`), `GuiConfig gui` (scale, theme),
+  `std::vector<InterfaceConfig>`, `std::vector<GraphConfig> graphs`
+- `InterfaceConfig` — `name`, `dbc` (may be empty), `baudrate` (0 = not set), `std::vector<ActionSpec> actions`
+- `ActionSpec` — serializable action description (type single/periodic/sin/lua, msg, signals, period, sin params, script, paused)
+- `load_config()` / `save_config()` — one YAML file holds everything; legacy `graphs_preset:` and
+  `actions: <file>` are still read and merged in
+- `AppConfig` — CLI flags + `config_path`; `restart_args()` for the GUI's re-exec
 
 ## Interface setup (`src/setup/`)
 - `setup_interfaces(Config)` — called at startup before sockets open
@@ -71,12 +74,57 @@ cmake --build build
   - `snapshot()` → `vector<ActionInfo>` — thread-safe read for the TUI (protected by mutex)
   - Calls a `notify_` callback after any change so the TUI re-renders
 - `SendFn = std::function<void(iface, id, data)>` — type alias used throughout
+- Every `Action` carries its `ActionSpec` (empty type = ad-hoc, not saved) and a shared `ActionLog` (lines + error)
+- `LuaAction` — calls `tick(t)` of a Lua script every period; API `send`, `send_raw`, `get_signal`, `print`;
+  runtime errors pause the action
+- `ActionFactory` — `ActionSpec` -> `Action`; caches one read-only `SendModel` per DBC path (used on the asio
+  thread for encoding); `add_all()` loads the actions of a config
+- `ActionHandler::replace_action(idx, action)` keeps the paused state; `clear()`, `set_all_paused()`
+
+## Guards (`src/guard/`) — monitoring (TUI / headless only; the GUI runs guards as flows, see `src/flow/Legacy.*`)
+- `GuardSpec` (config `guards:`) — name, interface, msg, signal, script, enabled
+- `Guard` — own Lua state; `evaluate()` runs `check(value, t)` for every frame of msg (matched by
+  interface + decoded msg name); outputs = returned number/bool/table; errors disable the guard
+- `GuardState` — live input/outputs/count + `ActionLog` (print/error), mutex-protected, read by the GUI
+- `GuardEngine` — list mutations posted to io (like `ActionHandler`), `on_frame()` on the asio thread,
+  `set_output_fn()` -> GUI graph (`GraphWindow::GUARD_IFACE`, series "guard/output") + `log_scalar("guard/<name>/<output>")`
+- Used in run_live (headless `--log`) and run_tui. `run_gui` / `AppState::load` convert `guards:` and non-single `actions:`
+  into flows (`migrate_legacy()`, `src/flow/Legacy.*`); `AppState::collect()` no longer writes them back
+- GUI: Trace signal context menu "Add guard..." creates a guard flow (`FlowsWindow::guard_template`)
+
+## Flows (`src/flow/`) — block diagrams (config `flows:`), GUI only
+- GUI: `FlowsWindow` ("Flows", left dock) lists the live flows (run/stop, status, duplicate/delete); a click opens the
+  flow in `FlowEditorWindow`. Debug view shows its own offline flows as tabs
+- Extra blocks: `add`, `diff`, `compare`, `movavg`, `fft` (`math_block_step()`, shared by live + offline), `csv` (offline: N inputs -> table, "Export" writes `path`)
+- `can_out`: `sig_values` = constants for unconnected inputs, `period_ms` 0 = send once on start, "Send now" (`FlowEngine::trigger`)
+- `lua`: output names in `signals` (step returns a table by name/position), `send()`/`send_raw()` (live), optional `init()`
+- Scope names with `/` form sub-folders in the Debug signal tree
+- `FlowSpec` (nodes + links, `[from_node, from_port, to_node, to_port]`), node types: `can_in` (one output port per
+  selected signal), `can_out` (one input port per signal, sends the message every `period_ms`), `lua` (1 in / 1 out,
+  `step(u, t)`, own Lua state per block), `generator` (sin/pulse/ramp/sawtooth/triangle/noise/const), `scope`
+  (-> graph series `flow/<flow>/<scope>` + `log_scalar`)
+- `Flow` — steady_timer every `step_ms`, blocks evaluated in dependency order; loops read the previous step;
+  unconnected `can_out` inputs keep the DBC default. `FlowEngine` — like `GuardEngine` (posts to io, snapshot for the GUI);
+  flows are built on the GUI thread (`ActionFactory::model_for` is not thread-safe)
+- `FlowEditorWindow` — imnodes (fetched in `cmake/ImGui.cmake`), edits a working copy, "Apply" (re)starts the flow;
+  right-click on the canvas adds blocks, Delete removes the selection, live values are shown at the ports
 
 ## TUI (`src/gui/`)
-- `TuiDataFrameSet` — full-screen ftxui application; three main tabs:
+- `TuiDataFrameSet` — full-screen ftxui application; main tabs (`Tab` enum, `tabs()` = visible ones):
   - **Trace** (`t`): live view of received frames per interface, sub-tabs per interface (←/→)
   - **Send** (`s`): browse DBC messages and edit signal values before sending
-  - **Actions** (`a`): list of active SingleActions and PeriodicActions
+  - **Actions** (`a`): list of actions; `→` on a Lua action shows its print()/error log
+  - **Guards** (`g`, only after `set_guard_engine()`): live input/outputs/count, Space = enable/disable, `→` = log
+  - **Graphs** (`v`): `GraphView`s (from `set_graphs(config.graphs)`), series recorded in `update()` /
+    `push_model_output()` / `push_guard_output()` under `mutex_`; drawn with `canvas()` (braille, min/max per column)
+  - **Model** (`m`) / **Playback** (`p`) when enabled
+- Mouse: render functions wrap elements in `clickable()` / `button()`, which register a `ClickTarget` (box via
+  `reflect`); `handle_mouse()` runs the smallest box containing the click, the wheel calls `scroll()`.
+  Buttons mostly `emit()` the equivalent key event through `key_handler_`, so mouse and keyboard share one code path.
+  `render_*` are non-const because they register targets; `click_targets_` is cleared at the start of `render()`
+- Logging via `set_log_control(ILogControl*, const Config*)`: `l` opens a path prompt (status line at the
+  bottom) or stops the log, `o` opens it in `log_viewer`; REC timer in the title. A 500 ms ticker redraws
+  without traffic. `LogController::set_verbose(false)` in run_tui - stdout belongs to ftxui.
 
 ### TUI navigation
 | Level | `nav_level_` | Controls |
@@ -97,9 +145,75 @@ cmake --build build
 - `Del`/`Backspace`: removes selected action
 - Actions update live (timer fires trigger `PostEvent` via `ActionHandler::notify_`)
 
+## GUI (`src/gui/`, Dear ImGui docking)
+- `Gui` — GLFW/OpenGL loop, main menu bar (File/View/Actions + log/gRPC status), `DockSpaceOverViewport`,
+  default layout via `DockBuilder` when `imgui.ini` has no `[Docking]` section
+- `Window` base: `title()` (= ImGui window name / dock id) + `visible`; every window calls `Begin(title(), &visible)`
+- `AppState` — running config vs. edited config, `collect()` (config + live flows + live graphs); owns no actions/guards (GUI = flows only), `ModelCache` gives DBC models, `send()` posts a frame to the asio thread, `save()`, `load()`
+  (applies graphs/actions/gui live; channel changes need restart), `request_restart()` -> `run_gui` returns true -> `main` execs
+- `GuiStyle` — fonts (embedded Roboto/Cousine, see `cmake/EmbedFile.cmake`) rebuilt at `16px * scale`, style scaling, theme
+- Windows: `TraceContainerWindow`/`TraceWindow`, `GraphWindow` (ring buffer + min/max decimation, Live/Paused,
+  Auto-Y, Fit, Default), `SendWindow` (sends a frame directly; "Periodic as flow" creates a CAN Out flow), `FlowsWindow`,
+  `SettingsWindow`, `ModelWindow`; `FileBrowser` is a small modal file dialog (call `render()` in the same ID scope as `open()`)
+
+## Debug mode (`src/gui/DebugView.*`, `src/debug/LogDocument.*`)
+- `Gui::Mode` Live/Debug, 2-segment toggle centred in the menu bar (`render_mode_toggle()`), default Live. In Debug the
+  dockspace/live windows are skipped and `DebugView` fills the whole work area (offline MCAP/BLF viewer, PlotJuggler-like)
+- `LogDocument` loads a log on a worker thread into `Series` (t in s since first sample, v); `poll()` on the render thread.
+  MCAP: decoded `/data` channels via `McapReader::read_signals()` (unpaced). BLF: raw frames kept, decoded with one DBC per
+  interface (`decode()` re-decodes with other DBCs; DBC defaults come from the config interfaces)
+- `DebugView`: sidebar (open, interfaces/DBC, filterable signal tree, drag & drop / double-click) + stacked ImPlot subplots
+  with linked X, shared cursor + value tooltip, min/max decimation of the visible range, legend right-click = remove
+- History: `AppState::save()` / autosave store `DebugView::snapshot()` (log, DBCs, tabs/plots as series labels) as
+  `DebugSession` in `config.debug_history` (newest first, max 20, one per log path, config `debug_history:`).
+  Sidebar "History" button + Debug > History menu -> `DebugView::restore()` reloads log and rebuilds the plots
+- Offline flows (`config.debug_flows`, `src/debug/OfflineFlow.*`): `FlowEditorWindow` got a `FlowBackend` (live = FlowEngine,
+  offline = `OfflineFlowBackend` in DebugView.cpp), `render_contents()` and `set_compact()` so it can be embedded. The sidebar
+  has a flow list below the signal tree (draggable divider); clicking a flow opens a "Flow: <name>" tab (own editor instance,
+  addressed by flow index -> deleting a flow closes all flow tabs) next to the plot tabs. All flows always run (no enable flag):
+  `run_offline_flow()` steps a FlowSpec on a `step_ms` grid over the loaded log (can_in = sample-and-hold of the log signals,
+  lua/generator as live, can_out ignored); each scope becomes series `flow/<flow>/<scope>`, appended after the log's own series
+  (`LogDocument::set_extra_series()`, `Data::base_series`). Flows re-run on every change and after (re)loading a log
+- Plot close: small "x" in the corner of each plot when a tab has more than one
+
+## DBC mode (`src/gui/DbcEditor.*`, `src/dbc/DbcModel.*`)
+- Third mode next to Live / Debug (`Gui::Mode::Dbc`): `DbcEditor` fills the work area. Left: message list (filter) and node list;
+  right: message (ID, extended, size, sender node), bit layout grid (click = select signal, red = overlap), signal table,
+  signal editor (start/size/order/sign, factor/offset/min/max, unit, mux, receivers, value table)
+- "Network" view (`DbcNetwork`, own ImDrawList canvas, no imnodes): boxes = nodes (move, resize via corner), arrows = messages sender -> receivers,
+  derived from the DbcDoc; links dock on the side facing the other node. Drag from a box border onto another box creates a message
+  (default signal carries the receiver) or extends an existing one; double click = in/out dialog with the pool of sender-less messages.
+  Box positions/sizes are stored in `<dbc>.net` next to the DBC (written by Save)
+- History: recently opened / saved DBC files in `config.dbc_history` (config `dbc_history:`, newest first, max 20); toolbar "History" button + DBC > History menu
+- `DbcDoc` is an own parser/writer (BU_, BO_, SG_, CM_, VAL_, VERSION; BA_* lines are kept verbatim), independent of dbcppp;
+  `problems()` reports duplicates, overlaps (multiplexed signals may share bits) and out-of-range signals
+
+## Logging (GUI)
+- `ILogControl::start(path)` / `supports_path()` / `last_path()`; `LogController` supports a custom path,
+  `RemoteLogControl` (gRPC) ignores it (server picks the file)
+- "Start log..." dialog in `Gui::render_log_dialog()`; `Config::log_viewer` command (`{file}` placeholder)
+  started detached via `log_viewer::launch()` (`src/gui/LogViewer.*`), `detect_plotjuggler()` scans ~/Downloads etc.
+
+## BLF
+- `BlfWriter` / `BlfReader` (`src/logger/`, constants in `BlfFormat.hpp`) follow python-can's `can/io/blf.py`:
+  144-byte "LOGG" header, LOBJ log containers (zlib, 128 KiB), CAN_MESSAGE / CAN_FD_MESSAGE objects,
+  APP_TEXT "caneo-channel:<n>=<iface>" for the interface mapping
+- `LogReader` interface (`open_log_reader()` detects BLF by the "LOGG" magic) implemented by `McapReader` and `BlfReader`;
+  `run_playback` decodes BLF frames via `set_decoder()` + DecoderRegistry
+- `LogController` writes MCAP and/or BLF (`LogOptions::format`); TUI also logs through LogController
+- `SocketCAN::send` sets `CAN_EFF_FLAG` for IDs > 0x7FF (received IDs carry no flags)
+
+## Log options
+- `LogOptions` (config `logging:`): raw, update_ratio, min_interval_ms (per-ID thinning in `McapLogger::log`),
+  flush_s (`closeLastChunk()` + flush) - all applied inside `McapLogger`, so every mode honours them
+- `update_ratio` is computed on every frame by the caller (LogController / log_frame) before thinning
+- GUI: Settings > Logging edits `config().logging`; `Gui::run` pushes changes via `ILogControl::set_options`
+- Config autosave: `GuiConfig::autosave_s`, `AppState::autosave_tick()` compares `config_to_yaml(collect())`
+
 ## Threading model
 - **asio thread**: runs `io_context`; handles socket reads, timer callbacks, all `ActionHandler` mutations
-- **ftxui thread** (main thread): renders TUI, handles keyboard events
+- **ftxui / ImGui thread** (main thread): renders TUI or GUI, handles input; `ActionFactory` and `AppState` live here
+- `SignalStore` and `LuaAction` Lua states are only touched on the asio thread
 - `sets_` (trace data) guarded by `mutex_` (written by asio thread, read by ftxui thread)
 - `ActionHandler::snapshot_` guarded by `snapshot_mutex_` (written by asio thread, read by ftxui thread)
 - `ActionHandler` action list (`actions_`) only accessed on the asio thread (via `boost::asio::post`)

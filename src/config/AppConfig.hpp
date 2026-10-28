@@ -2,6 +2,7 @@
 
 #include "Config.hpp"
 #include <string>
+#include <vector>
 
 struct AppConfig {
     bool        tui_mode      = false;
@@ -13,6 +14,7 @@ struct AppConfig {
     uint16_t    grpc_port     = 50051;
     std::string model_path;
     std::string playback_path;
+    std::string config_path = "caneo.yaml"; // where the GUI saves the config
     Config      config;
 
     // Parses gflags + positional interface args + loads Config.
@@ -22,4 +24,11 @@ struct AppConfig {
     // Returns a timestamped .mcap path under config.log_file_path (or cwd).
     // Creates the directory if it does not exist.
     std::string make_log_path() const;
+
+    // "caneo_YYYYmmdd_HHMMSS.mcap" for the current local time.
+    static std::string log_file_name();
+
+    // Command line to re-exec caneo with the same mode flags and the config
+    // file at config_path (used by the GUI's "Save & Restart").
+    std::vector<std::string> restart_args() const;
 };

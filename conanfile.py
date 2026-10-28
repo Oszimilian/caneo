@@ -18,9 +18,6 @@ class CaneoConan(ConanFile):
         self.requires("lua/5.4.6")
         self.requires("sol2/3.3.0")
         self.requires("gflags/2.2.2")
-        self.requires("imgui/1.90.5")
-        self.requires("implot/0.16")
         self.requires("glfw/3.4")
-
-    def configure(self):
-        self.options["imgui"].shared = False
+        # Dear ImGui (docking branch) and ImPlot are fetched by CMake, see
+        # cmake/ImGui.cmake: conan only ships the master branch without docking.

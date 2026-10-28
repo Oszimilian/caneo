@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Logger.hpp"
+#include "config/Config.hpp"
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
@@ -8,6 +9,8 @@
 #include <mcap/writer.hpp>
 
 #include <cstdint>
+#include <map>
+#include <utility>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,8 +19,16 @@
 class McapLogger : public Logger {
 public:
     // Opens (or creates) the MCAP file at path.
-    explicit McapLogger(const std::string& path);
+    explicit McapLogger(const std::string& path, LogOptions options = {});
     ~McapLogger() override;
+
+    // Takes effect for the next frame.
+    void set_options(const LogOptions& options) { options_ = options; }
+
+    // Closes the current chunk and flushes it to disk, so the data written so
+    // far survives a crash and can be read (with a fallback scan) while the
+    // log is still running. Called automatically every options.flush_s.
+    void flush();
 
     void log(const CanFrame& frame,
              const google::protobuf::Descriptor* descriptor,
@@ -30,7 +41,14 @@ private:
     // Log a scalar at an explicit log time (ns since unix epoch).
     void log_scalar_at(const std::string& topic, double value, uint64_t log_time_ns);
 
+    void maybe_flush(uint64_t now);
+
     mcap::McapWriter writer_;
+    LogOptions       options_;
+    uint64_t         last_flush_ns_ = 0;
+
+    // (interface, CAN id) -> log time of the last logged frame (min_interval_ms)
+    std::map<std::pair<std::string, uint32_t>, uint64_t> last_logged_ns_;
 
     // topic → channel id  (registered lazily on first message)
     std::unordered_map<std::string, mcap::ChannelId> channels_;

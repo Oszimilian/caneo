@@ -1,7 +1,7 @@
 #pragma once
 
+#include "AppState.hpp"
 #include "Window.hpp"
-#include "action/ActionHandler.hpp"
 #include "config/Config.hpp"
 #include "send/SendModel.hpp"
 
@@ -15,19 +15,17 @@ public:
         SendModel   model;
     };
 
-    SendWindow(const std::vector<InterfaceConfig>& iface_configs,
-               ActionHandler& action_handler);
+    SendWindow(const std::vector<InterfaceConfig>& iface_configs, AppState& state);
 
+    const char* title() const override { return "Send"; }
     void render() override;
 
-    std::vector<IfaceData>& ifaces() { return ifaces_; }
-
 private:
-
     void open_popup(int iface_idx, int msg_idx);
     void render_edit_window();
 
-    ActionHandler&         action_handler_;
+    AppState&              state_;
+    std::string            error_;
     std::vector<IfaceData> ifaces_;
 
     // edit window state
@@ -36,11 +34,5 @@ private:
     int                 popup_msg_   = -1;
     std::vector<double> editing_values_;
     char                period_buf_[16]   = "100";
-
-    // sin action state
-    int                 sin_sig_idx_      = 0;
-    double              sin_amplitude_    = 1.0;
-    double              sin_offset_       = 0.0;
-    int                 sin_period_ms_    = 1000;
-    int                 sin_interval_ms_  = 10;
+    std::string         info_;
 };

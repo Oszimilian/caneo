@@ -1,20 +1,23 @@
 #include "SendWindow.hpp"
 
-#include "action/Action.hpp"
+#include "flow/Flow.hpp"
 
 #include <dbcppp/Network.h>
 #include <algorithm>
 #include <format>
 #include <imgui.h>
 
-SendWindow::SendWindow(const std::vector<InterfaceConfig>& iface_configs,
-                       ActionHandler& action_handler)
-    : action_handler_(action_handler)
+SendWindow::SendWindow(const std::vector<InterfaceConfig>& iface_configs, AppState& state)
+    : state_(state)
 {
     for (const auto& cfg : iface_configs) {
         if (cfg.dbc.empty())
             continue;
-        ifaces_.push_back({ cfg.name, SendModel(cfg.dbc) });
+        try {
+            ifaces_.push_back({ cfg.name, SendModel(expand_path(cfg.dbc).string()) });
+        } catch (const std::exception& e) {
+            error_ += std::format("{}: {}\n", cfg.name, e.what());
+        }
     }
 }
 
@@ -31,7 +34,14 @@ void SendWindow::open_popup(int iface_idx, int msg_idx)
 
 void SendWindow::render()
 {
-    ImGui::Begin("Send");
+    if (!ImGui::Begin(title(), &visible)) {
+        ImGui::End();
+        render_edit_window();
+        return;
+    }
+
+    if (!error_.empty())
+        ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", error_.c_str());
 
     if (ifaces_.empty()) {
         ImGui::TextDisabled("No interfaces with DBC files configured.");
@@ -154,111 +164,50 @@ void SendWindow::render_edit_window()
 
     ImGui::Separator();
 
-    if (ImGui::Button("Send Once")) {
-        for (int k = 0; k < (int)msg.signals.size(); ++k)
-            iface.model.set_value(popup_msg_, k, editing_values_[k]);
-        auto payload = iface.model.encode(popup_msg_);
-        action_handler_.add_action(std::make_unique<SingleAction>(
-            action_handler_.io_ref(), iface.name,
-            msg.id, msg.name, std::move(payload),
-            action_handler_.send_fn_ref()));
+    if (ImGui::Button("Send once")) {
+        try {
+            state_.send(iface.name, msg.id, iface.model.encode_values(static_cast<std::size_t>(popup_msg_), editing_values_));
+            info_  = std::format("Sent {} on {}", msg.name, iface.name);
+            error_.clear();
+        } catch (const std::exception& e) {
+            error_ = e.what();
+        }
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Sends the frame once with the values above");
 
     ImGui::SameLine();
-
-    if (ImGui::Button("Send Periodic")) {
-        const int period_ms = std::max(1, std::atoi(period_buf_));
-        for (int k = 0; k < (int)msg.signals.size(); ++k)
-            iface.model.set_value(popup_msg_, k, editing_values_[k]);
-        auto payload = iface.model.encode(popup_msg_);
-        action_handler_.add_action(std::make_unique<PeriodicAction>(
-            action_handler_.io_ref(), iface.name,
-            msg.id, msg.name, std::move(payload),
-            action_handler_.send_fn_ref(),
-            std::chrono::milliseconds(period_ms)));
+    if (ImGui::Button("Periodic as flow")) {
+        // CAN Out block with the values as constants; waveforms etc. are built in the flow editor
+        FlowSpec f;
+        f.name    = std::format("Send: {}", msg.name);
+        f.step_ms = 10;
+        FlowNodeSpec n;
+        n.id        = 1;
+        n.type      = "can_out";
+        n.name      = "CAN Out";
+        n.interface = iface.name;
+        n.msg       = msg.name;
+        n.period_ms = std::max(1, std::atoi(period_buf_));
+        for (int k = 0; k < (int)msg.signals.size(); ++k) {
+            n.signals.push_back(msg.signals[k].name);
+            n.sig_values.push_back(editing_values_[k]);
+        }
+        f.nodes.push_back(std::move(n));
+        state_.flows().add(f);
+        info_ = std::format("Flow '{}' created (see Flows)", f.name);
+        error_.clear();
     }
-
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Creates a flow with a CAN Out block that sends this message periodically");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80.f);
-    ImGui::InputText("ms##period", period_buf_, sizeof(period_buf_),
-                     ImGuiInputTextFlags_CharsDecimal);
+    ImGui::InputText("ms##period", period_buf_, sizeof(period_buf_), ImGuiInputTextFlags_CharsDecimal);
 
-    // ── Sin action ────────────────────────────────────────────────────────
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Send Sin")) {
-        // Signal selector
-        const char* preview = msg.signals.empty() ? "(none)"
-                            : msg.signals[sin_sig_idx_].name.c_str();
-        ImGui::SetNextItemWidth(200.f);
-        if (ImGui::BeginCombo("Signal##sin", preview)) {
-            for (int k = 0; k < (int)msg.signals.size(); ++k) {
-                const bool sel = (k == sin_sig_idx_);
-                if (ImGui::Selectable(msg.signals[k].name.c_str(), sel))
-                    sin_sig_idx_ = k;
-                if (sel)
-                    ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-
-        const auto& ssig = msg.signals[std::min(sin_sig_idx_, (int)msg.signals.size() - 1)];
-        const double lo  = ssig.min_val;
-        const double hi  = ssig.max_val;
-        const float  spd = (lo < hi) ? (float)((hi - lo) / 200.0) : 1.f;
-
-        ImGui::SetNextItemWidth(200.f);
-        if (lo < hi)
-            ImGui::DragScalar("Amplitude##sin", ImGuiDataType_Double,
-                              &sin_amplitude_, spd, &lo, &hi, "%.2f");
-        else
-            ImGui::InputDouble("Amplitude##sin", &sin_amplitude_, 0, 0, "%.2f");
-
-        ImGui::SetNextItemWidth(200.f);
-        if (lo < hi)
-            ImGui::DragScalar("Offset##sin", ImGuiDataType_Double,
-                              &sin_offset_, spd, &lo, &hi, "%.2f");
-        else
-            ImGui::InputDouble("Offset##sin", &sin_offset_, 0, 0, "%.2f");
-
-        ImGui::SetNextItemWidth(220.f);
-        ImGui::InputInt("Sin period (ms)##sin",  &sin_period_ms_);
-        ImGui::SetNextItemWidth(220.f);
-        ImGui::InputInt("Update interval (ms)##sin", &sin_interval_ms_);
-        sin_period_ms_   = std::max(1, sin_period_ms_);
-        sin_interval_ms_ = std::max(1, sin_interval_ms_);
-
-        if (!msg.signals.empty() && ImGui::Button("Start Sin")) {
-            // Apply current editing values to model first
-            for (int k = 0; k < (int)msg.signals.size(); ++k)
-                iface.model.set_value(popup_msg_, k, editing_values_[k]);
-
-            // Build a self-contained encode_fn: captures base payload + ISignal*
-            auto base_payload      = iface.model.encode(popup_msg_);
-            const dbcppp::ISignal* isig = ssig.sig;
-            const double           y_lo = lo;
-            const double           y_hi = hi;
-
-            SinPeriodicAction::EncodeWithValueFn encode_fn =
-                [base_payload, isig, y_lo, y_hi](double v) mutable {
-                    if (y_lo < y_hi)
-                        v = std::clamp(v, y_lo, y_hi);
-                    auto data      = base_payload;
-                    const auto raw = isig->PhysToRaw(v);
-                    isig->Encode(raw, data.data());
-                    return data;
-                };
-
-            action_handler_.add_action(std::make_unique<SinPeriodicAction>(
-                action_handler_.io_ref(), iface.name,
-                msg.id, msg.name,
-                action_handler_.send_fn_ref(),
-                std::chrono::milliseconds(sin_interval_ms_),
-                std::move(encode_fn),
-                sin_amplitude_,
-                std::chrono::milliseconds(sin_period_ms_),
-                sin_offset_));
-        }
-    }
+    if (!error_.empty())
+        ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", error_.c_str());
+    else if (!info_.empty())
+        ImGui::TextDisabled("%s", info_.c_str());
 
     ImGui::End();
 }

@@ -1,11 +1,16 @@
 #include "config/AppConfig.hpp"
 #include "compat/print.hpp"
-#include "logger/McapReader.hpp"
+#include "logger/LogReader.hpp"
 #include "modes/run_gui.hpp"
 #include "modes/run_live.hpp"
 #include "modes/run_playback.hpp"
 #include "modes/run_tui.hpp"
 #include "setup/InterfaceSetup.hpp"
+
+#include <cerrno>
+#include <cstring>
+#include <unistd.h>
+#include <vector>
 
 int main(int argc, char* argv[]) {
     AppConfig app;
@@ -16,16 +21,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // In playback mode: auto-detect interfaces from MCAP if none were specified.
+    // In playback mode: auto-detect interfaces from the log if none were specified.
     if (!app.playback_path.empty() && app.config.interfaces.empty()) {
-        for (const auto& iface : McapReader(app.playback_path).scan_interfaces()) {
+        std::unique_ptr<LogReader> reader;
+        try {
+            reader = open_log_reader(app.playback_path);
+        } catch (const std::exception& e) {
+            std::println(stderr, "Error: {}", e.what());
+            return 1;
+        }
+        for (const auto& iface : reader->scan_interfaces()) {
             InterfaceConfig cfg;
             cfg.name = iface;
             app.config.interfaces.push_back(std::move(cfg));
         }
     }
 
-    if (app.config.interfaces.empty() && app.playback_path.empty()) {
+    // The GUI can start without interfaces: channels are set up in Settings.
+    if (app.config.interfaces.empty() && app.playback_path.empty() && !app.gui_mode) {
         std::println(stderr, "Error: no interfaces specified and no caneo.yaml found.");
         return 1;
     }
@@ -39,13 +52,28 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    bool restart = false;
     try {
         if (!app.playback_path.empty()) run_playback(app);
         else if (app.tui_mode)          run_tui(app);
-        else if (app.gui_mode)          run_gui(app);
+        else if (app.gui_mode)          restart = run_gui(app);
         else                            run_live(app);
     } catch (const std::exception& e) {
         std::println(stderr, "Error: {}", e.what());
+        return 1;
+    }
+
+    if (restart) {
+        // Everything is shut down at this point (sockets closed, log flushed):
+        // replace the process with a fresh caneo using the saved config.
+        const auto args = app.restart_args();
+        std::vector<char*> argv_new;
+        for (const auto& a : args)
+            argv_new.push_back(const_cast<char*>(a.c_str()));
+        argv_new.push_back(nullptr);
+        std::println("Restarting with {}", app.config_path);
+        execv("/proc/self/exe", argv_new.data());
+        std::println(stderr, "Restart failed: {}", std::strerror(errno));
         return 1;
     }
 }

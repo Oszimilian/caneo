@@ -13,6 +13,7 @@ class RemoteLogControl : public ILogControl {
 public:
     explicit RemoteLogControl(const std::string& server_address);
 
+    using ILogControl::start;   // start(path): the server picks the path
     void        start()           override;
     void        stop()            override;
     bool        is_logging()      const override { return logging_; }

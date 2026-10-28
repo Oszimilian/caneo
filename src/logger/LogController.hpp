@@ -2,6 +2,8 @@
 
 #include "ILogControl.hpp"
 #include "Logger.hpp"
+#include "BlfWriter.hpp"
+#include "McapLogger.hpp"
 #include "config/AppConfig.hpp"
 #include "frame/CanFrame.hpp"
 #include "proto/ProtoLogRegistry.hpp"
@@ -24,14 +26,27 @@ public:
     LogController(const AppConfig& app, ProtoLogRegistry& proto_registry);
 
     // Create a new timestamped MCAP file and start logging. No-op if already active.
-    void start();
+    void start() override;
+
+    // Start logging into `path` (directories are created). The extension is
+    // replaced per format: .mcap and/or .blf. No-op if already active.
+    void start(const std::string& path) override;
+    bool supports_path() const override { return true; }
 
     // Flush and close the current log file. No-op if not active.
-    void stop();
+    void stop() override;
 
-    bool        is_logging()      const;
-    std::string current_path()    const;  // empty when not logging
-    double      elapsed_seconds() const;  // seconds since start(), 0 if not logging
+    bool        is_logging()      const override;
+    std::string current_path()    const override;  // empty when not logging; MCAP if both
+    std::string current_blf_path() const;          // empty unless writing BLF
+    double      elapsed_seconds() const override;  // seconds since start(), 0 if not logging
+    std::string last_path()       const override;  // last finished log
+
+    // Print the file paths on start (off in the TUI, stdout belongs to ftxui).
+    void set_verbose(bool on) { verbose_ = on; }
+
+    // What to log; applies to the running log immediately.
+    void set_options(const LogOptions& options) override;
 
     // Full log-frame pipeline (decode proto, compute update_ratio, write).
     // Thread-safe; called from the asio thread.
@@ -50,8 +65,16 @@ private:
     ProtoLogRegistry& proto_registry_;
 
     mutable std::mutex      mutex_;
-    std::unique_ptr<Logger> logger_;
+    std::unique_ptr<McapLogger> logger_;   // MCAP (format mcap/both)
+    std::unique_ptr<BlfWriter>  blf_;      // BLF  (format blf/both)
+    std::string                 current_blf_path_;
+    uint64_t                    last_blf_flush_ns_ = 0;
+
+    bool active() const { return logger_ || blf_; }
     std::string             current_path_;
+    std::string             last_path_;
+    LogOptions              options_;
+    bool                    verbose_ = true;
     std::chrono::steady_clock::time_point log_start_time_;
 
     // Per-(interface, can_id) last-seen timestamp for update_ratio computation.

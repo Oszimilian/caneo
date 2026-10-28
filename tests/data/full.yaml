@@ -1,0 +1,61 @@
+virtual: true
+log_file_path: ~/Logs
+log_viewer: "~/Downloads/PlotJuggler.AppImage -n -d {file}"
+gui:
+  scale: 1.5
+  theme: dark
+  autosave_s: 10
+logging:
+  format: both
+  raw: false
+  update_ratio: false
+  min_interval_ms: 5
+  flush_s: 3
+interfaces:
+  vcan0:
+    dbc: ../../config/vcan0.dbc
+    actions:
+      - type: periodic
+        msg: SOME_MSG
+        period_ms: 10
+        signals:
+          A: 1
+          B: -2.5
+      - type: sin
+        msg: SOME_MSG
+        signal: A
+        amplitude: 10
+        offset: 5
+        sin_period_ms: 2000
+        interval_ms: 5      # legacy key for period_ms
+        paused: false
+      - type: lua
+        script: ../../scripts/steering_sweep.lua
+        period_ms: 20
+  vcan1: ../../config/vcan1.dbc    # oldest layout: scalar = dbc
+graphs:
+  - name: Test
+    window_s: 10
+    auto_y: false
+    signals:
+      - msg: SOME_MSG
+        signal: A
+      - interface: vcan0
+        msg: SOME_MSG
+        signal: B
+        y_axis: 1
+        y_min: -10
+        y_max: 10
+      - interface: __model__
+        signal: error
+guards:
+  - name: lws_check
+    interface: vcan0
+    msg: SOME_MSG
+    signal: A
+    script: ../../scripts/lws_guard.lua
+  - interface: vcan0
+    msg: OTHER
+    signal: B
+    script: x.lua
+    enabled: false

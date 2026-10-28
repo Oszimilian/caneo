@@ -69,6 +69,33 @@ uint32_t derive_can_id(const std::string& msg_name)
     return static_cast<uint32_t>(std::hash<std::string>{}(msg_name) & 0x7FFu);
 }
 
+using SchemaMap = std::unordered_map<mcap::SchemaId, std::unique_ptr<SchemaState>>;
+
+// One protobuf SchemaState per schema, for deserialization.
+SchemaMap build_schemas(mcap::McapReader& reader)
+{
+    SchemaMap schemas;
+    for (const auto& [id, schema] : reader.schemas()) {
+        if (schema->encoding != "protobuf") continue;
+
+        auto state = std::make_unique<SchemaState>();
+
+        google::protobuf::FileDescriptorSet fds;
+        if (!fds.ParseFromArray(
+                reinterpret_cast<const char*>(schema->data.data()),
+                static_cast<int>(schema->data.size())))
+            continue;
+
+        for (const auto& file_proto : fds.file())
+            state->pool.BuildFile(file_proto);
+
+        state->desc = state->pool.FindMessageTypeByName(std::string(schema->name));
+        if (state->desc)
+            schemas[id] = std::move(state);
+    }
+    return schemas;
+}
+
 } // namespace
 
 // ─── McapReader ──────────────────────────────────────────────────────────────
@@ -138,26 +165,7 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
 
     reader.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan);
 
-    // Build a protobuf SchemaState per schema for deserialization.
-    std::unordered_map<mcap::SchemaId, std::unique_ptr<SchemaState>> schemas;
-    for (const auto& [id, schema] : reader.schemas()) {
-        if (schema->encoding != "protobuf") continue;
-
-        auto state = std::make_unique<SchemaState>();
-
-        google::protobuf::FileDescriptorSet fds;
-        if (!fds.ParseFromArray(
-                reinterpret_cast<const char*>(schema->data.data()),
-                static_cast<int>(schema->data.size())))
-            continue;
-
-        for (const auto& file_proto : fds.file())
-            state->pool.BuildFile(file_proto);
-
-        state->desc = state->pool.FindMessageTypeByName(std::string(schema->name));
-        if (state->desc)
-            schemas[id] = std::move(state);
-    }
+    auto schemas = build_schemas(reader);
 
     // Classify all channels.
     std::unordered_map<mcap::ChannelId, ChannelInfo> channel_map;
@@ -265,4 +273,52 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
 
     reader.close();
     std::println("McapReader: playback finished.");
+}
+
+void McapReader::read_signals(const std::function<bool(uint64_t, const std::string&, const std::string&,
+                                                       const std::vector<DecodedSignal>&)>& fn) const
+{
+    std::ifstream file(path_, std::ios::binary);
+    if (!file.is_open())
+        throw std::runtime_error("McapReader: cannot open file: " + path_);
+
+    mcap::FileStreamReader stream(file);
+    mcap::McapReader reader;
+    if (const auto status = reader.open(stream); !status.ok())
+        throw std::runtime_error("McapReader: " + std::string(status.message));
+    reader.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan);
+
+    auto schemas = build_schemas(reader);
+
+    std::unordered_map<mcap::ChannelId, ChannelInfo> channel_map;
+    for (const auto& [id, channel] : reader.channels()) {
+        auto info = classify_topic(channel->topic);
+        if (info.kind == ChannelKind::Data)
+            channel_map[id] = std::move(info);
+    }
+
+    std::vector<DecodedSignal> signals;
+    for (const auto& view : reader.readMessages()) {
+        const auto ch_it = channel_map.find(view.channel->id);
+        if (ch_it == channel_map.end()) continue;
+        const auto schema_it = schemas.find(view.channel->schemaId);
+        if (schema_it == schemas.end()) continue;
+        const auto* desc = schema_it->second->desc;
+
+        std::unique_ptr<google::protobuf::Message> msg(schema_it->second->factory.GetPrototype(desc)->New());
+        if (!msg->ParseFromArray(reinterpret_cast<const char*>(view.message.data),
+                                 static_cast<int>(view.message.dataSize)))
+            continue;
+
+        const auto* refl = msg->GetReflection();
+        signals.clear();
+        for (int i = 0; i < desc->field_count(); ++i) {
+            const auto* field = desc->field(i);
+            if (field->type() != google::protobuf::FieldDescriptor::TYPE_DOUBLE) continue;
+            signals.push_back(DecodedSignal{.name = field->name(), .value = refl->GetDouble(*msg, field), .unit = ""});
+        }
+        if (!fn(view.message.logTime, ch_it->second.iface, ch_it->second.msg_name, signals))
+            break;
+    }
+    reader.close();
 }

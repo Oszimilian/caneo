@@ -2,8 +2,16 @@
 
 #include "config/Config.hpp"
 #include "gui/GraphWindow.hpp"
+#include "send/SendModel.hpp"
 
-// Loads graph definitions from the top-level graphs_preset file and populates
-// graph_window.  Each signal entry may specify an 'interface:' key; if omitted,
-// all interfaces are searched in order for a matching message name.
-void load_graph_preset(const Config& config, GraphWindow& graph_window);
+#include <functional>
+#include <memory>
+#include <string>
+
+// Returns the DBC model of an interface (nullptr if none).
+using ModelLookup = std::function<std::shared_ptr<const SendModel>(const std::string& iface)>;
+
+// Adds the graphs of config.graphs to graph_window. A signal without an
+// 'interface:' is searched in all interfaces in order. Signals whose message
+// cannot be found are kept (marked unresolved) so saving does not lose them.
+void apply_graph_config(const Config& config, GraphWindow& graph_window, const ModelLookup& models);

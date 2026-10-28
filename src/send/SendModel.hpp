@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -30,6 +32,15 @@ public:
     const std::vector<SendMessage>& messages() const { return messages_; }
     void                            set_value(std::size_t msg_idx, std::size_t sig_idx, double value);
     std::vector<uint8_t>            encode(std::size_t msg_idx) const;
+
+    // Encodes msg_idx with explicit physical values (one per signal, same
+    // order as SendMessage::signals). Does not touch the stored values, so it
+    // is safe to call concurrently on a model that is no longer modified.
+    std::vector<uint8_t>            encode_values(std::size_t msg_idx, std::span<const double> values) const;
+
+    // Lookup by name; -1 if not found.
+    int find_message(std::string_view name) const;
+    int find_signal(std::size_t msg_idx, std::string_view name) const;
 
 private:
     std::unique_ptr<dbcppp::INetwork> network_;

@@ -1,7 +1,10 @@
 #include "run_gui.hpp"
 
-#include "action/ActionHandler.hpp"
-#include "action/ActionPreset.hpp"
+#include "compat/print.hpp"
+#include "gui/AppState.hpp"
+#include "gui/FlowEditorWindow.hpp"
+#include "flow/FlowEngine.hpp"
+#include "flow/Legacy.hpp"
 #include "gui/GraphPreset.hpp"
 #include "gui/ModelWindow.hpp"
 #include "decoder/DecoderRegistry.hpp"
@@ -11,6 +14,7 @@
 #include "logger/LogController.hpp"
 #include "grpc/RemoteLogControl.hpp"
 #include "model/ModelEngine.hpp"
+#include "send/ModelCache.hpp"
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "grpc/CanStreamServer.hpp"
@@ -21,13 +25,14 @@
 
 #include <boost/asio.hpp>
 #include <csignal>
+#include <format>
 #include <map>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
-void run_gui(const AppConfig& app)
+bool run_gui(AppConfig& app)
 {
     boost::asio::io_context io;
     DecoderRegistry         decoders;
@@ -43,15 +48,31 @@ void run_gui(const AppConfig& app)
             it->second->send(id, data);
     };
 
-    ActionHandler action_handler(io, send_fn);
+    // saved actions / guards run as flows in the GUI
+    const auto converted = migrate_legacy(app.config);
 
-    // Load per-interface action presets (all start paused)
-    for (const auto& cfg : app.config.interfaces)
-        load_action_presets(cfg, action_handler);
+    // Latest value of every received signal; read by Lua blocks and the model.
+    // Only accessed on the asio thread.
+    SignalStore   signal_store;
+    ModelCache    model_cache;
+    model_cache.set_interfaces(app.config.interfaces);
 
-    auto gui = std::make_shared<Gui>(app.config.interfaces, action_handler);
+    FlowEngine    flow_engine(io, &signal_store, send_fn);
+    flow_engine.set_model_fn([&model_cache](const std::string& iface) { return model_cache.model_for(iface); });
 
-    load_graph_preset(app.config, *gui->graph_window());
+    AppState app_state(app.config, app.config_path, model_cache, flow_engine);
+    // the Send window sends from the GUI thread: hand the frame to the asio thread
+    app_state.set_send_fn([&io, send_fn](const std::string& iface, uint64_t id, const std::vector<uint8_t>& data) {
+        boost::asio::post(io, [send_fn, iface, id, data] { send_fn(iface, id, data); });
+    });
+
+    if (!converted.empty())
+        app_state.set_status(std::format("{} action(s)/guard(s) of the config now run as flows - save to keep them", converted.size()));
+
+    auto gui = std::make_shared<Gui>(app.config.interfaces, app_state);
+
+    apply_graph_config(app.config, *gui->graph_window(),
+                       [&model_cache](const std::string& iface) { return model_cache.model_for(iface); });
 
     ProtoLogRegistry proto_registry;
     for (const auto& cfg : app.config.interfaces)
@@ -75,13 +96,19 @@ void run_gui(const AppConfig& app)
     }
     gui->set_log_controller(log_control.get());
 
+    // Scope blocks of the flows: plotted like guard outputs and logged.
+    flow_engine.set_output_fn([gui, local_lc](const std::string& flow, const std::string& scope, double v) {
+        gui->graph_window()->push_value(GraphWindow::GUARD_IFACE, FlowEditorWindow::series_name(flow, scope), v);
+        if (local_lc) local_lc->log_scalar(FlowEditorWindow::series_name(flow, scope), v);
+    });
+    flow_engine.add_all(app.config.flows);
+
     std::unique_ptr<CanStreamServer> grpc_server;
     if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
         grpc_server->set_send_fn(send_fn);
     }
 
-    SignalStore       signal_store;
     std::unique_ptr<ModelEngine> model_engine;
     if (!app.model_path.empty()) {
         model_engine = std::make_unique<ModelEngine>(app.model_path, signal_store, local_lc);
@@ -91,12 +118,28 @@ void run_gui(const AppConfig& app)
         });
     }
 
+    std::vector<std::string> socket_errors;
     for (const auto& cfg : app.config.interfaces) {
-        if (!cfg.dbc.empty())
-            decoders.add_interface(cfg.name, cfg.dbc);
+        if (!cfg.dbc.empty()) {
+            try {
+                decoders.add_interface(cfg.name, expand_path(cfg.dbc).string());
+            } catch (const std::exception& e) {
+                std::println(stderr, "Warning: {}", e.what());
+                socket_errors.push_back(std::format("{}: {}", cfg.name, e.what()));
+            }
+        }
         std::unique_ptr<Socket> sock;
         if (app.grpc_client.empty()) {
-            auto* can = new SocketCAN(io, cfg.name);
+            // A missing interface must not kill the GUI: it can be fixed in
+            // Settings, which needs a running GUI.
+            SocketCAN* can = nullptr;
+            try {
+                can = new SocketCAN(io, cfg.name);
+            } catch (const std::exception& e) {
+                std::println(stderr, "Warning: {}", e.what());
+                socket_errors.push_back(e.what());
+                continue;
+            }
             socket_map[cfg.name] = can;
             sock.reset(can);
         } else {
@@ -105,17 +148,24 @@ void run_gui(const AppConfig& app)
             sock.reset(gs);
         }
         auto& socket = sockets.emplace_back(std::move(sock));
-        socket->onFrame([gui, &decoders, local_lc, &model_engine, &grpc_server]
+        socket->onFrame([gui, &decoders, local_lc, &model_engine, &grpc_server, &signal_store]
                         (std::unique_ptr<DataFrame> frame) {
             auto* f = dynamic_cast<CanFrame*>(frame.get());
             if (!f) return;
             if (grpc_server) grpc_server->broadcast(*f);
             try { decoders.decode(*f); } catch (const std::runtime_error&) {}
             gui->update(*f);
-            if (model_engine) model_engine->on_frame(*f);
+            if (model_engine) model_engine->on_frame(*f);   // updates signal_store too
+            else              signal_store.update(*f);
             if (local_lc) local_lc->log_can_frame(*f);
         });
         socket->start();
+    }
+
+    if (!socket_errors.empty()) {
+        std::string msg = "Problems with the configured channels:";
+        for (const auto& e : socket_errors) msg += "\n  " + e;
+        app_state.set_status(msg, true);
     }
 
     // Show gRPC connection indicator when running as client.
@@ -137,9 +187,16 @@ void run_gui(const AppConfig& app)
         if (!ec) gui->stop();
     });
 
+    // Keep io.run() alive even when no async reads are pending (gRPC client,
+    // or no interfaces at all).
+    auto work_guard = boost::asio::make_work_guard(io);
     std::thread asio_thread([&io] { io.run(); });
-    gui->run();   // blocks until window closed or stop() called
+    gui->run();   // blocks until window closed, stop() or a restart request
+    work_guard.reset();
     io.stop();
     asio_thread.join();
     log_control->stop();
+
+    app.config_path = app_state.path();
+    return app_state.restart_requested();
 }
