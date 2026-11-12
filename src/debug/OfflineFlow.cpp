@@ -203,10 +203,16 @@ OfflineFlowResult run_offline_flow(const FlowSpec& spec, const LogDocument::Data
                 for (std::size_t p = 0; p < node.out.size(); ++p) node.out[p] = node.samplers[p].at(t);
             } else if (ns.type == "generator") {
                 node.out[0] = generator_value(ns, t, rng);
-            } else if (ns.type == "const") {
-                node.out[0] = ns.offset;
+            } else if (ns.type == "const" || ns.type == "slider") {
+                node.out[0] = ns.type == "slider" ? ns.value : ns.offset;
+            } else if (ns.type == "button") {
+                node.out[0] = 0.0;
             } else if (ns.type == "lua") {
-                const auto r = node.step(node.in[0], t);
+                const auto r = node.in.size() == 1 ? node.step(node.in[0], t) : [&] {
+                    std::vector<double> args = node.in;
+                    args.push_back(t);
+                    return node.step(sol::as_args(args));
+                }();
                 if (!r.valid()) {
                     const sol::error e = r;
                     return fail(std::format("block '{}': step() at t={:.3f}s: {}", ns.name, t, e.what()));

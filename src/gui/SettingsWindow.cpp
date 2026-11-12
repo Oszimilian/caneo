@@ -12,15 +12,13 @@
 #include <imgui_stdlib.h>
 
 #include "LogViewer.hpp"
+#include "PipelineWindow.hpp"
+#include "config/RecentConfigs.hpp"
 
 namespace fs = std::filesystem;
 
 static constexpr int ARPHRD_CAN_TYPE = 280;   // <linux/if_arp.h> ARPHRD_CAN
 
-static const std::array<std::pair<const char*, uint32_t>, 7> BAUDRATES = {{
-    {"125 kbit/s", 125'000}, {"250 kbit/s", 250'000}, {"500 kbit/s", 500'000},
-    {"800 kbit/s", 800'000}, {"1 Mbit/s", 1'000'000}, {"(not set)", 0}, {"Custom", 1},
-}};
 
 SettingsWindow::SettingsWindow(AppState& state)
     : state_(state)
@@ -143,6 +141,19 @@ void SettingsWindow::render_config_file()
     if (ImGui::Button("Save as..."))
         open_save_as_dialog();
     ImGui::SameLine();
+    if (ImGui::Button("Recent..."))
+        ImGui::OpenPopup("##recent_configs");
+    if (ImGui::BeginPopup("##recent_configs")) {
+        const auto recent = recent_configs();
+        if (recent.empty())
+            ImGui::TextDisabled("(none yet)");
+        for (const auto& r : recent) {
+            if (ImGui::MenuItem(r.c_str()))
+                state_.load(r);   // channels / DBCs need a restart (File > Save & restart)
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Saves channels, GUI settings, all flows and all graphs\n"
@@ -176,141 +187,6 @@ void SettingsWindow::render_config_file()
     }
 }
 
-void SettingsWindow::render_channels()
-{
-    auto& cfg = state_.config();
-
-    if (detected_time_ < 0.0 || ImGui::GetTime() - detected_time_ > 2.0)
-        refresh_detected();
-
-    ImGui::Checkbox("Virtual CAN (vcan)", &cfg.virtual_can);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("On start-up, load the vcan module and create the\n"
-                          "interfaces below as virtual CAN devices (needs sudo).");
-
-    ImGui::Spacing();
-
-    constexpr ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                       ImGuiTableFlags_BordersOuter | ImGuiTableFlags_SizingStretchProp;
-    const float em = ImGui::GetFontSize();
-    int remove_row = -1;
-
-    if (ImGui::BeginTable("##channels", 4, tflags)) {
-        ImGui::TableSetupColumn("Interface", ImGuiTableColumnFlags_WidthFixed, em * 9);
-        ImGui::TableSetupColumn("Baudrate",  ImGuiTableColumnFlags_WidthFixed, em * 9);
-        ImGui::TableSetupColumn("DBC file",  ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, em * 1.8f);
-        ImGui::TableHeadersRow();
-
-        for (int row = 0; row < static_cast<int>(cfg.interfaces.size()); ++row) {
-            auto& iface = cfg.interfaces[row];
-            ImGui::PushID(row);
-            ImGui::TableNextRow();
-
-            // Interface: free text + drop-down of detected CAN devices
-            ImGui::TableSetColumnIndex(0);
-            ImGui::SetNextItemWidth(-ImGui::GetFrameHeight());
-            ImGui::InputText("##name", &iface.name, ImGuiInputTextFlags_CharsNoBlank);
-            ImGui::SameLine(0, 0);
-            if (ImGui::BeginCombo("##detected", nullptr, ImGuiComboFlags_NoPreview | ImGuiComboFlags_PopupAlignLeft)) {
-                if (detected_.empty())
-                    ImGui::TextDisabled("No CAN interfaces found");
-                for (const auto& d : detected_) {
-                    const std::string label = std::format("{}  ({}{})", d.name, d.state, d.is_virtual ? ", virtual" : "");
-                    if (ImGui::Selectable(label.c_str(), d.name == iface.name))
-                        iface.name = d.name;
-                }
-                ImGui::EndCombo();
-            }
-            const bool exists = std::ranges::any_of(detected_, [&](const auto& d) { return d.name == iface.name; });
-            if (!exists && !cfg.virtual_can && ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s does not exist on this machine", iface.name.c_str());
-
-            // Baudrate
-            ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(cfg.virtual_can);
-            const char* preview = "Custom";
-            for (const auto& [label, rate] : BAUDRATES)
-                if (rate == iface.baudrate) preview = label;
-            const bool custom = std::string_view(preview) == "Custom";
-            ImGui::SetNextItemWidth(custom ? em * 4.5f : -1);
-            if (ImGui::BeginCombo("##baud", custom ? "Custom" : preview)) {
-                for (const auto& [label, rate] : BAUDRATES) {
-                    const bool is_custom = rate == 1;
-                    if (ImGui::Selectable(label, is_custom ? custom : rate == iface.baudrate))
-                        iface.baudrate = is_custom ? (custom ? iface.baudrate : 100'000) : rate;
-                }
-                ImGui::EndCombo();
-            }
-            if (custom) {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputScalar("##baud_custom", ImGuiDataType_U32, &iface.baudrate);
-            }
-            ImGui::EndDisabled();
-
-            // DBC
-            ImGui::TableSetColumnIndex(2);
-            ImGui::SetNextItemWidth(-em * 2.5f);
-            ImGui::InputTextWithHint("##dbc", "(no DBC - raw frames only)", &iface.dbc);
-            if (!iface.dbc.empty() && !fs::exists(expand_path(iface.dbc)) && ImGui::IsItemHovered())
-                ImGui::SetTooltip("File not found");
-            ImGui::SameLine();
-            if (ImGui::Button("...")) {
-                dialog_     = Dialog::Dbc;
-                dialog_row_ = row;
-                browser_.open("Select DBC for " + iface.name, FileBrowser::Mode::Open, {".dbc"},
-                              iface.dbc.empty() ? fs::path{} : expand_path(iface.dbc));
-            }
-
-            ImGui::TableSetColumnIndex(3);
-            if (ImGui::Button("x"))
-                remove_row = row;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Remove channel");
-
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-
-    if (remove_row >= 0)
-        cfg.interfaces.erase(cfg.interfaces.begin() + remove_row);
-
-    if (ImGui::Button("+ Add channel")) {
-        InterfaceConfig ic;
-        // Suggest the first detected interface that is not configured yet.
-        for (const auto& d : detected_)
-            if (std::ranges::none_of(cfg.interfaces, [&](const auto& c) { return c.name == d.name; })) {
-                ic.name = d.name;
-                break;
-            }
-        if (ic.name.empty())
-            ic.name = std::format("{}{}", cfg.virtual_can ? "vcan" : "can", cfg.interfaces.size());
-        ic.baudrate = cfg.virtual_can ? 0 : 500'000;
-        cfg.interfaces.push_back(std::move(ic));
-    }
-
-    if (state_.channels_changed()) {
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 0.85f, 0.4f, 0.35f));
-        if (ImGui::BeginChild("##restart", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Border)) {
-            ImGui::TextWrapped("Channel changes take effect after a restart of caneo. "
-                               "\"Save & Restart\" writes %s and restarts with it.", state_.path().c_str());
-            if (ImGui::Button("Save & Restart") && state_.save())
-                state_.request_restart();
-            ImGui::SameLine();
-            if (ImGui::Button("Revert")) {
-                const auto& run = state_.running();
-                cfg.virtual_can = run.virtual_can;
-                cfg.interfaces  = run.interfaces;
-            }
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-    }
-}
-
 void SettingsWindow::render_logging()
 {
     auto& cfg = state_.config();
@@ -327,19 +203,8 @@ void SettingsWindow::render_logging()
     auto& lo = cfg.logging;
     ImGui::TextUnformatted("Format");
     ImGui::SameLine(em * 7);
-    for (const auto& [value, label, tip] : {
-             std::tuple{"mcap", "MCAP", "Decoded signals + guard outputs. Open with PlotJuggler / Foxglove."},
-             std::tuple{"blf",  "BLF",  "Raw CAN frames only (Vector BLF), very small.\n"
-                                        "Open with CANalyzer/CANoe or asammdf (+ DBC). Replay: --playback file.blf"},
-             std::tuple{"both", "MCAP + BLF", "Both files with the same name: BLF as the complete raw archive,\n"
-                                              "MCAP (optionally thinned out) for a quick look in PlotJuggler."} }) {
-        if (ImGui::RadioButton(label, lo.format == value))
-            lo.format = value;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", tip);
-        ImGui::SameLine();
-    }
-    ImGui::NewLine();
+    ImGui::TextDisabled("%s - set by the Log blocks in the Inputs window",
+                        lo.format == "both" ? "MCAP + BLF" : lo.format == "blf" ? "BLF" : "MCAP");
 
     ImGui::TextUnformatted("MCAP content");
     ImGui::SameLine(em * 7);
@@ -441,22 +306,48 @@ void SettingsWindow::render_logging()
         ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", viewer_error_.c_str());
 }
 
+void SettingsWindow::render_body()
+{
+    if (ImGui::CollapsingHeader("Appearance", ImGuiTreeNodeFlags_DefaultOpen))
+        render_appearance();
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Configuration file", ImGuiTreeNodeFlags_DefaultOpen))
+        render_config_file();
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Logging", ImGuiTreeNodeFlags_DefaultOpen))
+        render_logging();
+}
+
 void SettingsWindow::render()
 {
     ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 48, ImGui::GetFontSize() * 34), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    if (ImGui::Begin(title(), &visible)) {
-        if (ImGui::CollapsingHeader("Appearance", ImGuiTreeNodeFlags_DefaultOpen))
-            render_appearance();
-        ImGui::Spacing();
-        if (ImGui::CollapsingHeader("Configuration file", ImGuiTreeNodeFlags_DefaultOpen))
-            render_config_file();
-        ImGui::Spacing();
-        if (ImGui::CollapsingHeader("Logging", ImGuiTreeNodeFlags_DefaultOpen))
-            render_logging();
-        ImGui::Spacing();
-        if (ImGui::CollapsingHeader("CAN channels", ImGuiTreeNodeFlags_DefaultOpen))
-            render_channels();
+    if (ImGui::Begin(title(), &visible))
+        render_body();
+    ImGui::End();
+}
+
+// The Settings mode: fills the work area.
+void SettingsWindow::render_full()
+{
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->WorkPos);
+    ImGui::SetNextWindowSize(vp->WorkSize);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                       ImGuiWindowFlags_NoDocking;
+    if (ImGui::Begin("Settings##full", nullptr, flags) && ImGui::BeginTabBar("##settings_tabs")) {
+        if (ImGui::BeginTabItem("Channels")) {
+            if (pipeline_) pipeline_->render_contents();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("General")) {
+            ImGui::BeginChild("##general", ImVec2(0, 0));
+            render_body();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
     ImGui::End();
 }

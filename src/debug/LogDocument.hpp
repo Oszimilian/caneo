@@ -77,6 +77,7 @@ public:
 
     bool        busy() const { return busy_; }
     std::string status() const;   // progress / last error, for the UI
+    double      fraction() const { return fraction_; }   // 0..1 of the current stage while busy
     // True once after a worker finished and data() changed.
     bool        poll();
     const Data& data() const { return data_; }
@@ -97,6 +98,8 @@ private:
     std::string          status_;
     std::atomic<bool>    busy_{false};
     std::atomic<uint64_t> progress_{0};
+    std::atomic<double>   fraction_{0.0};
+    std::atomic<bool>     decoding_{false};   // BLF stage 2 (DBC decoding) instead of reading
     std::jthread         worker_;
 };
 

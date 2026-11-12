@@ -10,7 +10,7 @@
 //
 // Interface names come from the "caneo-channel:<n>=<iface>" APP_TEXT objects
 // written by BlfWriter; for foreign files channel n maps to the n-th
-// configured interface, or "can<n-1>" (see set_channel_names()).
+// entry of set_channel_names(), or "can<n>" (see set_channel_names()).
 class BlfReader : public LogReader {
 public:
     explicit BlfReader(std::string path);
@@ -32,7 +32,9 @@ public:
 
     // Calls fn for every frame in file order; channel names are resolved via
     // channel_name() afterwards. Throws on a malformed file.
-    void read(const std::function<bool(const RawFrame&)>& fn) const;   // fn returns false to stop
+    // on_progress (optional) gets the fraction (0..1) of the file consumed so far.
+    void read(const std::function<bool(const RawFrame&)>& fn,
+              const std::function<void(double)>& on_progress = {}) const;   // fn returns false to stop
     std::string channel_name(uint16_t channel) const;
 
 private:

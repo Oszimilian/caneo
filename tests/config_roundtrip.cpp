@@ -36,6 +36,12 @@ int main(int argc, char* argv[])
     check(a.same_channels(b), "channels");
     check(a.graphs.size() == b.graphs.size(), "graph count");
     check(a.guards == b.guards, "guards");
+    check(a.pipeline == b.pipeline, "pipeline");
+    check(a.xcp == b.xcp, "xcp");
+    check(a.xcp_targets == b.xcp_targets, "xcp targets");
+    for (std::size_t i = 0; i < a.interfaces.size() && i < b.interfaces.size(); ++i)
+        check(a.interfaces[i].fd == b.interfaces[i].fd && a.interfaces[i].data_baudrate == b.interfaces[i].data_baudrate,
+              std::format("CAN FD of {}", a.interfaces[i].name));
     for (std::size_t i = 0; i < a.interfaces.size() && i < b.interfaces.size(); ++i)
         check(a.interfaces[i].actions == b.interfaces[i].actions,
               std::format("actions of {}", a.interfaces[i].name));
@@ -46,8 +52,8 @@ int main(int argc, char* argv[])
 
     std::size_t n_actions = 0;
     for (const auto& i : a.interfaces) n_actions += i.actions.size();
-    std::fputs(std::format("{}: {} interfaces, {} actions, {} graphs, {} guards -> {}\n",
-                           argv[1], a.interfaces.size(), n_actions, a.graphs.size(), a.guards.size(),
+    std::fputs(std::format("{}: {} interfaces, {} actions, {} graphs, {} guards, {} XCP targets -> {}\n",
+                           argv[1], a.interfaces.size(), n_actions, a.graphs.size(), a.guards.size(), a.xcp_targets.size(),
                            failures ? "FAILED" : "OK").c_str(), stdout);
     return failures ? 1 : 0;
 }

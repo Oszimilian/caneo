@@ -8,6 +8,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <imnodes.h>
+#include "ImNodesPan.hpp"
 #include <set>
 #include <string_view>
 
@@ -32,8 +33,18 @@ constexpr TypeInfo TYPES[] = {
     { "generator", "Generator", IM_COL32(120,  60, 150, 255) },
     { "scope",     "Scope",     IM_COL32( 90,  90,  95, 255) },
     { "const",     "Const",     IM_COL32(120,  60, 150, 255) },
+    { "slider",    "Slider",    IM_COL32(120,  60, 150, 255) },
+    { "button",    "Button",    IM_COL32(120,  60, 150, 255) },
+    { "rs",        "RS Flip-Flop", IM_COL32( 30, 130, 140, 255) },
+    { "switch",    "Switch",    IM_COL32( 30, 130, 140, 255) },
     { "add",       "Add",       IM_COL32(150, 120,  30, 255) },
     { "diff",      "Diff",      IM_COL32(150, 120,  30, 255) },
+    { "lua_position", "Lua: Position (vx, vy, yaw rate)", IM_COL32( 40, 130,  60, 255) },
+    { "mul",       "Multiply",  IM_COL32(150, 120,  30, 255) },
+    { "sin",       "Sin",       IM_COL32(150, 120,  30, 255) },
+    { "cos",       "Cos",       IM_COL32(150, 120,  30, 255) },
+    { "gain",      "Gain",      IM_COL32(150, 120,  30, 255) },
+    { "integrator", "1/s",      IM_COL32(150, 120,  30, 255) },
     { "compare",   "Compare",   IM_COL32(150, 120,  30, 255) },
     { "movavg",    "MovAvg",    IM_COL32( 30, 130, 140, 255) },
     { "fft",       "FFT",       IM_COL32( 30, 130, 140, 255) },
@@ -52,7 +63,10 @@ const char* const WAVES[] = { "sin", "pulse", "ramp", "sawtooth", "triangle", "n
 
 FlowSpec logic_only(FlowSpec s)
 {
-    for (auto& n : s.nodes) n.x = n.y = 0.0f;
+    for (auto& n : s.nodes) {
+        n.x = n.y = 0.0f;
+        if (n.type == "slider") n.value = 0.0;   // moving a slider is not an edit that needs Apply
+    }
     return s;
 }
 
@@ -67,6 +81,7 @@ public:
     void remove(std::size_t i) override { state_.flows().remove(i); }
     void set_enabled(std::size_t i, bool on) override { state_.flows().set_enabled(i, on); }
     void trigger(std::size_t i, int node_id) override { state_.flows().trigger(i, node_id); }
+    void set_control(std::size_t i, int node_id, double v) override { state_.flows().set_control(i, node_id, v); }
 
     std::vector<std::string> interfaces() const override
     {
@@ -107,6 +122,27 @@ FlowEditorWindow::FlowEditorWindow(AppState& state)
     : state_(state), backend_(std::make_unique<LiveFlowBackend>(state)), title_("Flow Editor")
 {
     visible = false;
+    // Save writes the diagram as shown, also edits that were not applied yet
+    state_.set_flow_override([this](std::vector<FlowSpec>& flows) {
+        if (!has_edit_ || edit_idx_ < 0 || edit_idx_ >= static_cast<int>(flows.size())) return;
+        auto& f = flows[static_cast<std::size_t>(edit_idx_)];
+        if (logic_only(edit_) == logic_only(f)) {
+            // only node positions (or a slider) changed: the running flow stays, but save the layout as shown
+            for (auto& n : f.nodes)
+                for (const auto& e : edit_.nodes)
+                    if (e.id == n.id) { n.x = e.x; n.y = e.y; }
+            return;
+        }
+        FlowSpec spec = edit_;
+        spec.enabled  = f.enabled;
+        // slider values are live, keep the running ones
+        for (auto& n : spec.nodes)
+            if (n.type == "slider")
+                for (const auto& o : f.nodes)
+                    if (o.id == n.id && o.type == "slider") n.value = o.value;
+        f = std::move(spec);
+        state_.set_unapplied_note(std::format("flow '{}' has unapplied changes (saved, but not running - press Apply)", f.name));
+    });
 }
 
 FlowEditorWindow::FlowEditorWindow(AppState& state, std::unique_ptr<FlowBackend> backend, std::string title)
@@ -116,7 +152,11 @@ FlowEditorWindow::FlowEditorWindow(AppState& state, std::unique_ptr<FlowBackend>
 
 FlowEditorWindow::~FlowEditorWindow()
 {
-    if (ctx_) ImNodes::DestroyContext(ctx_);
+    if (ctx_) {
+        ImNodes::SetCurrentContext(ctx_);
+        if (editor_) ImNodes::EditorContextFree(editor_);
+        ImNodes::DestroyContext(ctx_);
+    }
 }
 
 // ─── flow selection / apply ─────────────────────────────────────────────────
@@ -186,18 +226,26 @@ void FlowEditorWindow::add_node(const std::string& type, float x, float y)
 {
     FlowNodeSpec n;
     n.id   = next_id_++;
-    n.type = type;
+    n.type = type == "lua_position" ? "lua" : type;
     n.x    = x;
     n.y    = y;
-    n.name = std::format("{} {}", type_info(type).label, n.id);
+    n.name = std::format("{} {}", type == "lua_position" ? "Position" : type_info(type).label, n.id);
     if (type == "can_in" || type == "can_out") {
         if (const auto ifaces = backend_->interfaces(); !ifaces.empty())
             n.interface = ifaces.front();
         n.name = type_info(type).label;
     } else if (type == "lua") {
         n.code = Flow::LUA_TEMPLATE;
+    } else if (type == "lua_position") {
+        n.code    = Flow::LUA_POSITION_TEMPLATE;
+        n.inputs  = {"vx", "vy", "yaw_rate"};
+        n.signals = {"X", "Y", "psi", "vX", "vY"};
     } else if (type == "scope") {
         n.name = std::format("scope{}", n.id);
+    } else if (type == "rs") {
+        n.op = "R";
+    } else if (type == "slider") {
+        n.name = "Slider";
     } else if (type == "csv") {
         n.signals = {"in1", "in2"};
         n.path    = "flow_out.csv";
@@ -334,9 +382,14 @@ void FlowEditorWindow::render_contents()
 {
     if (!ctx_) {
         ctx_ = ImNodes::CreateContext();
+        ImNodes::SetCurrentContext(ctx_);
+        editor_ = ImNodes::EditorContextCreate();
+        imnodes_setup_navigation();
         theme_.clear();
     }
+    // Several editors exist (live window + Debug flow tabs): select both context and editor every frame.
     ImNodes::SetCurrentContext(ctx_);
+    ImNodes::EditorContextSet(editor_);
     if (theme_ != state_.config().gui.theme) {
         theme_ = state_.config().gui.theme;
         if (theme_ == "light") ImNodes::StyleColorsLight();
@@ -396,6 +449,10 @@ void FlowEditorWindow::render_toolbar(const std::vector<FlowInfo>& flows)
     if (ImGui::Button("Apply"))
         apply();
     if (is_dirty) ImGui::PopStyleColor();
+    if (is_dirty && !backend_->offline()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.85f, 0.5f, 0.05f, 1.0f), "not applied - new/changed blocks (scopes, plots) do nothing until Apply");
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(backend_->offline() ? "Saves the diagram and runs all enabled flows over the loaded log"
                                               : "Creates or restarts the flow with the current diagram");
@@ -440,15 +497,21 @@ void FlowEditorWindow::render_canvas(const FlowInfo* info)
 
     float log_h = 0.0f;
     if (show_log_) log_h = ImGui::GetTextLineHeightWithSpacing() * 7;
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    zoom_.toolbar(ImVec2(avail.x * 0.5f, avail.y * 0.5f));
+    ImGui::SameLine();
+    ImGui::TextDisabled("wheel = zoom, right-drag = pan");
     ImGui::BeginChild("##canvas", ImVec2(0, -log_h), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
+    zoom_.begin();
     ImNodes::BeginNodeEditor();
+    zoom_.inside();
 
     for (std::size_t i = 0; i < edit_.nodes.size(); ++i) {
         auto& node = edit_.nodes[i];
         if (positions_dirty_)
-            ImNodes::SetNodeGridSpacePos(node.id, ImVec2(node.x, node.y));
+            ImNodes::SetNodeGridSpacePos(node.id, zoom_.to_grid(node.x, node.y));
         render_node(node, i, live_ok ? &live : nullptr);
     }
     positions_dirty_ = false;
@@ -459,21 +522,22 @@ void FlowEditorWindow::render_canvas(const FlowInfo* info)
     }
 
     const bool hovered = ImNodes::IsEditorHovered();
-    int hid = 0;
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImNodes::IsNodeHovered(&hid) && !ImNodes::IsLinkHovered(&hid)) {
-        const ImVec2 pan = ImNodes::EditorContextGetPanning();
-        const ImVec2 mp  = ImGui::GetMousePos();
-        add_x_ = mp.x - origin.x - pan.x;
-        add_y_ = mp.y - origin.y - pan.y;
-        open_add_popup_ = true;
-    }
     ImNodes::EndNodeEditor();
+    zoom_.end();
 
-    for (auto& n : edit_.nodes) {
-        const ImVec2 p = ImNodes::GetNodeGridSpacePos(n.id);
+    for (auto& n : edit_.nodes) {   // before navigate(): it may change the zoom
+        const ImVec2 p = zoom_.from_grid(ImNodes::GetNodeGridSpacePos(n.id));
         n.x = p.x;
         n.y = p.y;
     }
+    if (zoom_.navigate(hovered, origin)) {
+        const ImVec2 pan = ImNodes::EditorContextGetPanning();
+        const ImVec2 mp  = ImGui::GetMousePos();
+        add_x_ = (mp.x - origin.x - pan.x) / zoom_.zoom;
+        add_y_ = (mp.y - origin.y - pan.y) / zoom_.zoom;
+        open_add_popup_ = true;
+    }
+    if (zoom_.changed) positions_dirty_ = true;
 
     // new link: normalise to output -> input; an input has one source
     int a = 0, b = 0;
@@ -545,10 +609,26 @@ void FlowEditorWindow::render_add_popup()
     if (ImGui::BeginPopup("##add_block")) {
         ImGui::TextDisabled("Add block");
         ImGui::Separator();
-        for (const auto& t : TYPES)
-            if (!(backend_->offline() && std::string_view(t.type) == "can_out") &&
-                !(!backend_->offline() && std::string_view(t.type) == "csv") && ImGui::MenuItem(t.label))
-                add_node(t.type, add_x_, add_y_);
+        // grouped: sources -> processing -> sinks
+        struct Group { const char* title; std::initializer_list<std::string_view> types; };
+        const Group groups[] = {
+            { "Inputs",     { "can_in", "generator", "const", "slider", "button" } },
+            { "Processing", { "lua", "lua_position", "add", "mul", "gain", "integrator", "sin", "cos", "diff", "compare", "movavg", "fft", "rs", "switch" } },
+            { "Outputs",    { "can_out", "scope", "csv" } },
+        };
+        bool first = true;
+        for (const auto& g : groups) {
+            if (!first) ImGui::Separator();
+            first = false;
+            ImGui::TextDisabled("%s", g.title);
+            for (const auto type : g.types) {
+                if (backend_->offline() && type == "can_out") continue;
+                if (!backend_->offline() && type == "csv") continue;
+                for (const auto& t : TYPES)
+                    if (type == t.type && ImGui::MenuItem(t.label))
+                        add_node(t.type, add_x_, add_y_);
+            }
+        }
         ImGui::EndPopup();
     }
 }
@@ -670,6 +750,29 @@ void FlowEditorWindow::render_node(FlowNodeSpec& node, std::size_t idx, const Fl
                 ImGui::SetTooltip("Names of the outputs. step() may return a table {name = value} (or an array);\n"
                                   "send(msg, {sig = value}[, iface]) and send_raw(id, {bytes}[, iface]) send CAN frames.");
         }
+        {   // input names: "vx, vy" -> step(vx, vy, t)
+            std::string joined;
+            for (const auto& s : node.inputs) joined += (joined.empty() ? "" : ", ") + s;
+            ImGui::SetNextItemWidth(em * 14);
+            if (ImGui::InputTextWithHint("##ins", "inputs: a, b, c (default u)", &joined)) {
+                std::vector<std::string> names;
+                std::string              cur;
+                for (const char c : joined + ",") {
+                    if (c == ',') {
+                        const auto b = cur.find_first_not_of(' '), e = cur.find_last_not_of(' ');
+                        if (b != std::string::npos) names.push_back(cur.substr(b, e - b + 1));
+                        cur.clear();
+                    } else {
+                        cur += c;
+                    }
+                }
+                const int n = std::max<int>(1, static_cast<int>(names.size()));
+                std::erase_if(edit_.links, [&](const FlowLinkSpec& l) { return l.to_node == node.id && l.to_port >= n; });
+                node.inputs = std::move(names);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Names of the inputs. One input: step(u, t); several: step(in1, in2, ..., t).");
+        }
         ImGui::InputTextMultiline("##code", &node.code, ImVec2(em * 24, em * 11), ImGuiInputTextFlags_AllowTabInput);
     } else if (node.type == "generator") {
         ImGui::SetNextItemWidth(em * 8);
@@ -696,6 +799,34 @@ void FlowEditorWindow::render_node(FlowNodeSpec& node, std::size_t idx, const Fl
     } else if (node.type == "const") {
         ImGui::SetNextItemWidth(em * 8);
         ImGui::InputDouble("value", &node.offset, 0, 0, "%.6g");
+    } else if (node.type == "slider") {
+        // live: every change goes straight into the running flow (no Apply)
+        ImGui::SetNextItemWidth(em * 12);
+        if (ImGui::SliderScalar("##value", ImGuiDataType_Double, &node.value, &node.min, &node.max, "%.4g")) {
+            if (edit_idx_ >= 0) backend_->set_control(static_cast<std::size_t>(edit_idx_), node.id, node.value);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+click to type a value");
+        ImGui::SetNextItemWidth(em * 5);
+        ImGui::InputDouble("min", &node.min, 0, 0, "%.4g");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(em * 5);
+        ImGui::InputDouble("max", &node.max, 0, 0, "%.4g");
+        if (node.max <= node.min) node.max = node.min + 1.0;
+        node.value = std::clamp(node.value, node.min, node.max);
+    } else if (node.type == "button") {
+        if (ImGui::Button("Press", ImVec2(em * 6, 0)) && edit_idx_ >= 0)
+            backend_->set_control(static_cast<std::size_t>(edit_idx_), node.id, 1.0);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Output is 1 for one step, then 0 again (not sent to the CAN bus)");
+    } else if (node.type == "rs") {
+        ImGui::SetNextItemWidth(em * 9);
+        if (ImGui::BeginCombo("##rsdom", node.op == "S" ? "set dominant" : "reset dominant")) {
+            if (ImGui::Selectable("reset dominant", node.op != "S")) node.op = "R";
+            if (ImGui::Selectable("set dominant", node.op == "S")) node.op = "S";
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which input wins when S and R are 1 at the same time");
+    } else if (node.type == "switch") {
+        ImGui::TextDisabled("ctrl > 0.5: b, else a");
     } else if (node.type == "compare") {
         ImGui::SetNextItemWidth(em * 5);
         if (ImGui::BeginCombo("a ? b", node.op.c_str())) {
@@ -703,6 +834,14 @@ void FlowEditorWindow::render_node(FlowNodeSpec& node, std::size_t idx, const Fl
                 if (ImGui::Selectable(o, node.op == o)) node.op = o;
             ImGui::EndCombo();
         }
+    } else if (node.type == "sin" || node.type == "cos") {
+        ImGui::Checkbox("degrees", &node.degrees);
+    } else if (node.type == "gain") {
+        ImGui::SetNextItemWidth(em * 8);
+        ImGui::InputDouble("gain", &node.gain, 0, 0, "%.9g");
+    } else if (node.type == "integrator") {
+        ImGui::SetNextItemWidth(em * 8);
+        ImGui::InputDouble("start value", &node.offset, 0, 0, "%.9g");
     } else if (node.type == "diff") {
         ImGui::Checkbox("divide by dt", &node.derivative);
     } else if (node.type == "movavg") {
@@ -769,11 +908,15 @@ void FlowEditorWindow::render_node(FlowNodeSpec& node, std::size_t idx, const Fl
     auto port_name = [&](int p, bool out) -> std::string {
         if (node.type == "can_in" || node.type == "can_out" || node.type == "csv")
             return p < static_cast<int>(node.signals.size()) ? node.signals[static_cast<std::size_t>(p)] : "?";
-        if (node.type == "add" || node.type == "compare") {
+        if (node.type == "add" || node.type == "mul" || node.type == "compare") {
             if (!out) return p == 0 ? "a" : "b";
-            return node.type == "add" ? "a+b" : "a" + node.op + "b";
+            return node.type == "add" ? "a+b" : node.type == "mul" ? "a*b" : "a" + node.op + "b";
         }
         if (node.type == "fft" && out) return p == 0 ? "f [Hz]" : "amp";
+        if (node.type == "rs") return out ? (p == 0 ? "Q" : "!Q") : (p == 0 ? "S" : "R");
+        if (node.type == "switch" && !out) return p == 0 ? "a (ctrl 0)" : p == 1 ? "b (ctrl 1)" : "ctrl";
+        if (node.type == "lua" && !out && p < static_cast<int>(node.inputs.size()))
+            return node.inputs[static_cast<std::size_t>(p)];
         if (node.type == "lua" && out && p < static_cast<int>(node.signals.size()))
             return node.signals[static_cast<std::size_t>(p)];
         return out ? "y" : "u";

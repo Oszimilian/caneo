@@ -1,5 +1,5 @@
 # caneo configuration - written by caneo, comments are not preserved
-virtual: true
+virtual: false
 log_file_path: ~/Dokumente/Logs
 gui:
   scale: 1
@@ -11,9 +11,74 @@ logging:
   min_interval_ms: 0
   flush_s: 10
 interfaces:
-  can3:
+  can2:
     dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    virtual: true
+  can6:
+    dbc: ""
     baudrate: 1000000
+    fd: true
+    data_baudrate: 2000000
+    virtual: true
+    live: false
+    log: false
+pipeline:
+  nodes:
+    - id: 1
+      type: live
+      x: 960
+      y: 0
+    - id: 2
+      type: log
+      x: 960
+      y: 150
+      format: mcap
+    - id: 3
+      type: virtual_socketcan
+      x: 0
+      y: 0
+      channels: [can2]
+    - id: 4
+      type: baudrate
+      x: 320
+      y: 0
+      baudrate: 1000000
+      virtual: true
+    - id: 5
+      type: decode
+      x: 640
+      y: 0
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    - id: 6
+      type: virtual_socketcan
+      x: 3
+      y: 333
+      channels: [can6]
+    - id: 7
+      type: baudrate
+      x: 382
+      y: 352
+      baudrate: 1000000
+      virtual: false
+      fd: true
+      data_baudrate: 2000000
+    - id: 8
+      type: xcp
+      name: ECU
+      x: 875
+      y: 397
+      tx_id: 0x7e0
+      rx_id: 0x7e1
+      addr_ext: 0
+      timeout_ms: 100
+      pad: false
+  links:
+    - [3, 0, 4, 0]
+    - [4, 0, 5, 0]
+    - [5, 0, 1, 0]
+    - [5, 0, 2, 0]
+    - [6, 0, 7, 0]
+    - [7, 0, 8, 0]
 graphs:
   - name: Federweg
     window_s: 30
@@ -25,6 +90,13 @@ graphs:
       - interface: can0
         msg: damper_sensor_front
         signal: damper_front_ch0
+      - interface: can3
+        msg: SS_ELMO_TARGET
+        signal: SS_ELMO_TARGET_LWS
+        y_axis: 1
+      - interface: can2
+        msg: SS_ELMO_TARGET
+        signal: SS_ELMO_TARGET_LWS
   - name: Graph 2
     window_s: 30
     auto_y: true
@@ -32,6 +104,18 @@ graphs:
       - interface: can3
         msg: CAN_IF_SPEED_Y
         signal: CAN_IF_TRACKED_SPEED
+      - interface: __guards__
+        signal: flow/Test/scope4
+        y_axis: 1
+      - interface: __guards__
+        signal: flow/Test/scope13
+        y_axis: 2
+      - interface: can3
+        msg: RFC4800_LWS
+        signal: LWS_Sensor
+      - interface: __guards__
+        signal: flow/Test/scope12
+        y_axis: 1
   - name: Graph 3
     window_s: 30
     auto_y: true
@@ -45,6 +129,38 @@ graphs:
 dbc_history:
   - /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
 debug_history:
+  - name: FSF_DV_Skidpad_Run3_20250830_165951_20250830_170329_#03-1_CAN.blf
+    log: /home/maximilian/Downloads/FSF_DV_Skidpad_Run3_20250830_165951_20250830_170329_#03-1_CAN.blf
+    saved: 2026-11-01 17:18
+    dbcs:
+      can3: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+      can5: /home/maximilian/Git/fse_datenbasen_2713/can5.dbc
+    tabs:
+      - name: Plot 1
+        plots:
+          - [flow/flow 2/vx, flow/flow 2/vy, can3/IMU_Tx_Standard_011/YawRate_Oz]
+          - [flow/flow 2/x, flow/flow 2/y]
+      - name: XY 3
+        xy: true
+        plots:
+          - [flow/flow 2/x, flow/flow 2/y]
+      - name: XY 6
+        xy: true
+        plots:
+          - []
+  - name: Trace_Wolfi_TestfahrtT1159D2510_20261027_191352_20261027_192727_#01-1_CAN.blf
+    log: /home/maximilian/Downloads/Trace_Wolfi_TestfahrtT1159D2510_20261027_191352_20261027_192727_#01-1_CAN.blf
+    saved: 2026-10-29 11:28
+    dbcs:
+      can1: /home/maximilian/Git/fse_datenbasen_2713/can1.dbc
+      can2: /home/maximilian/Git/fse_datenbasen_2713/can2.dbc
+      can3: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+      can4: /home/maximilian/Git/fse_datenbasen_2713/can5.dbc
+      can5: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
+    tabs:
+      - name: Plot 1
+        plots:
+          - []
   - name: Trace_Wolfi_20260812_123522_20260812_124229_#01-1_CAN.blf
     log: /home/maximilian/Downloads/Trace_Wolfi_20260812_123522_20260812_124229_#01-1_CAN.blf
     saved: 2026-10-27 16:50
@@ -73,7 +189,7 @@ debug_history:
 flows:
   - name: Test
     enabled: true
-    step_ms: 1
+    step_ms: 10
     nodes:
       - id: 1
         type: generator
@@ -113,11 +229,55 @@ flows:
         signals: [LWS_Sensor]
         period_ms: 1
         sig_values: [0]
+      - id: 6
+        type: button
+        name: Button 6
+        x: 543
+        y: 859
+      - id: 7
+        type: button
+        name: Button 7
+        x: 546
+        y: 969
+      - id: 8
+        type: rs
+        name: RS Flip-Flop 8
+        x: 814
+        y: 886
+        op: R
+      - id: 9
+        type: const
+        name: Const 9
+        x: 1071
+        y: 818
+        offset: 10
+      - id: 10
+        type: const
+        name: Const 10
+        x: 1098
+        y: 1001
+        offset: 100
+      - id: 11
+        type: switch
+        name: Switch 11
+        x: 1364
+        y: 829
+      - id: 12
+        type: scope
+        name: scope12
+        x: 1619
+        y: 889
     links:
       - [3, 0, 2, 1]
       - [1, 0, 2, 0]
       - [2, 0, 4, 0]
       - [1, 0, 5, 0]
+      - [6, 0, 8, 0]
+      - [7, 0, 8, 1]
+      - [9, 0, 11, 0]
+      - [10, 0, 11, 1]
+      - [8, 0, 11, 2]
+      - [11, 0, 12, 0]
 debug_flows:
   - name: flow 1
     enabled: true
@@ -176,3 +336,220 @@ debug_flows:
       - [2, 0, 4, 0]
       - [5, 0, 6, 0]
       - [7, 0, 6, 1]
+  - name: flow 2
+    enabled: true
+    step_ms: 1
+    nodes:
+      - id: 1
+        type: can_in
+        name: Vel_Angle
+        x: 165.000015
+        y: 372.000061
+        interface: can5
+        msg: Vel_Angle
+        signals: [VelX, VelY]
+      - id: 7
+        type: can_in
+        name: IMU_Tx_Standard_011
+        x: -72.3282776
+        y: 769.930054
+        interface: can3
+        msg: IMU_Tx_Standard_011
+        signals: [YawRate_Oz]
+      - id: 8
+        type: add
+        name: Add 8
+        x: 979.000244
+        y: 383.999878
+      - id: 9
+        type: gain
+        name: Gain 9
+        x: 574.000061
+        y: 376.999878
+        gain: 0.27778000000000003
+      - id: 10
+        type: gain
+        name: Gain 10
+        x: 573
+        y: 549
+        gain: 0.27778000000000003
+      - id: 12
+        type: gain
+        name: Gain 12
+        x: 571.090881
+        y: 734.776917
+        gain: 0.66590000000000005
+      - id: 13
+        type: gain
+        name: Gain 13
+        x: 568.545227
+        y: 913.147217
+        gain: 0.2581
+      - id: 15
+        type: add
+        name: Add 15
+        x: 977.999329
+        y: 543
+      - id: 16
+        type: scope
+        name: vx
+        x: 1291.00024
+        y: 378
+      - id: 17
+        type: scope
+        name: vy
+        x: 1282.00012
+        y: 561.000061
+      - id: 20
+        type: scope
+        name: x
+        x: 1928.00024
+        y: 1459
+      - id: 21
+        type: scope
+        name: y
+        x: 1930.99951
+        y: 1664.99939
+      - id: 22
+        type: lua
+        name: Position 22
+        x: 1257
+        y: 1307.99951
+        signals: [X, Y, psi, vX, vY]
+        inputs: [vx, vy, yaw_rate]
+        code: |
+          -- Position from vx, vy (vehicle frame) and yaw rate: rotate first, then integrate.
+          --   psi = integral(yaw_rate dt)                  (yaw_rate in rad/s)
+          --   vX = vx cos(psi) - vy sin(psi)
+          --   vY = vx sin(psi) + vy cos(psi)
+          --   X = integral(vX dt), Y = integral(vY dt)
+          -- Outputs: X, Y, psi (rad), vX, vY. t = seconds since the flow started.
+
+          local psi, X, Y, last = 0, 0, 0, nil
+
+          function step(vx, vy, yaw_rate, t)
+              local dt = last and (t - last) or 0
+              last = t
+              local w = yaw_rate * math.pi / 180   -- °/s -> rad/s
+          	psi = psi + w * dt
+              local vX = vx * math.cos(psi) - vy * math.sin(psi)
+              local vY = vx * math.sin(psi) + vy * math.cos(psi)
+              X = X + vX * dt
+              Y = Y + vY * dt
+              return { X = X, Y = Y, psi = psi, vX = vX, vY = vY }
+          end
+
+      - id: 24
+        type: gain
+        name: Gain 24
+        x: 274.183838
+        y: 687.761169
+        gain: 0.01745
+      - id: 25
+        type: gain
+        name: Gain 25
+        x: 299.750519
+        y: 820.945984
+        gain: 0.01745
+      - id: 26
+        type: csv
+        name: CSV Out 26
+        x: 3335.86426
+        y: 709.861755
+        signals: [VX, VY, X, Y, Yaw, Pitch, Role, ax, ay, az, BreakPreassureFront, BreakPreassureBack, LWS]
+        path: /home/maximilian/Dokumente/Starkstrom/KistlerSkippadLuca2.csv
+      - id: 27
+        type: can_in
+        name: M01_Brake_Pressure_Front
+        x: 2648.03247
+        y: 1247.24744
+        interface: can3
+        msg: M01_Brake_Pressure_Front
+        signals: [Brake_Pressure_Front]
+      - id: 28
+        type: can_in
+        name: M01_Brake_Pressure_Rear
+        x: 2648.33276
+        y: 1430.19263
+        interface: can3
+        msg: M01_Brake_Pressure_Rear
+        signals: [Brake_Pressure_Rear]
+      - id: 29
+        type: can_in
+        name: IMU_Tx_Standard_011
+        x: 2525.81738
+        y: 505.508026
+        interface: can3
+        msg: IMU_Tx_Standard_011
+        signals: [Acceleration_Ay, YawRate_Oz]
+      - id: 30
+        type: can_in
+        name: IMU_Tx_Standard_021
+        x: 2527.08691
+        y: 687.586914
+        interface: can3
+        msg: IMU_Tx_Standard_021
+        signals: [Acceleration_Ax, RollRate_Ox]
+      - id: 31
+        type: can_in
+        name: IMU_Tx_Standard_031
+        x: 2344.03955
+        y: 999.040894
+        interface: can3
+        msg: IMU_Tx_Standard_031
+        signals: [Acceleration_Az]
+      - id: 32
+        type: const
+        name: Const 32
+        x: 2216.99902
+        y: 720.371582
+        offset: 0
+      - id: 33
+        type: can_in
+        name: RFC4800_LWS
+        x: 2687.5957
+        y: 1574.13855
+        interface: can3
+        msg: RFC4800_LWS
+        signals: [LWS_Sensor]
+    links:
+      - [1, 0, 9, 0]
+      - [1, 1, 10, 0]
+      - [9, 0, 8, 0]
+      - [10, 0, 15, 0]
+      - [8, 0, 16, 0]
+      - [15, 0, 17, 0]
+      - [7, 0, 22, 2]
+      - [15, 0, 22, 1]
+      - [8, 0, 22, 0]
+      - [22, 0, 20, 0]
+      - [22, 1, 21, 0]
+      - [13, 0, 8, 1]
+      - [12, 0, 15, 1]
+      - [7, 0, 24, 0]
+      - [24, 0, 12, 0]
+      - [7, 0, 25, 0]
+      - [25, 0, 13, 0]
+      - [8, 0, 26, 0]
+      - [15, 0, 26, 1]
+      - [22, 0, 26, 2]
+      - [22, 1, 26, 3]
+      - [29, 1, 26, 4]
+      - [29, 0, 26, 8]
+      - [30, 1, 26, 6]
+      - [30, 0, 26, 7]
+      - [31, 0, 26, 9]
+      - [32, 0, 26, 5]
+      - [27, 0, 26, 10]
+      - [28, 0, 26, 11]
+      - [33, 0, 26, 12]
+xcp:
+  target: ECU
+  elf: /home/maximilian/MABY/REALTIME/_BUILD/linux/model
+  a2l: /home/maximilian/MABY/REALTIME/_BUILD/model_ert_rtw/model.a2l
+  poll_ms: 50
+  measure:
+    - {name: model_P.SineWave_Amp, event: 0}
+    - {name: model_B.SineWave, event: 0}
+  plots:
+    - [model_P.SineWave_Amp, model_B.SineWave]

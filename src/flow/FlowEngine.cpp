@@ -67,6 +67,15 @@ void FlowEngine::trigger(std::size_t idx, int node_id)
     });
 }
 
+void FlowEngine::set_control(std::size_t idx, int node_id, double value)
+{
+    boost::asio::post(io_, [this, idx, node_id, value] {
+        if (idx >= flows_.size()) return;
+        flows_[idx]->set_control(node_id, value);
+        rebuild_snapshot();   // the snapshot's spec carries the slider value (saved with the config)
+    });
+}
+
 void FlowEngine::clear()
 {
     boost::asio::post(io_, [this] {

@@ -276,7 +276,8 @@ void McapReader::play(const OnFrame& on_frame, const OnSend& on_send,
 }
 
 void McapReader::read_signals(const std::function<bool(uint64_t, const std::string&, const std::string&,
-                                                       const std::vector<DecodedSignal>&)>& fn) const
+                                                       const std::vector<DecodedSignal>&)>& fn,
+                              const std::function<void(double)>& on_progress) const
 {
     std::ifstream file(path_, std::ios::binary);
     if (!file.is_open())
@@ -297,8 +298,17 @@ void McapReader::read_signals(const std::function<bool(uint64_t, const std::stri
             channel_map[id] = std::move(info);
     }
 
+    uint64_t t_begin = 0, t_span = 0;
+    if (const auto stats = reader.statistics(); stats && stats->messageEndTime > stats->messageStartTime) {
+        t_begin = stats->messageStartTime;
+        t_span  = stats->messageEndTime - stats->messageStartTime;
+    }
+    uint64_t n_msgs = 0;
+
     std::vector<DecodedSignal> signals;
     for (const auto& view : reader.readMessages()) {
+        if (on_progress && t_span && (++n_msgs & 0x3FF) == 0 && view.message.logTime >= t_begin)
+            on_progress(std::min(1.0, static_cast<double>(view.message.logTime - t_begin) / static_cast<double>(t_span)));
         const auto ch_it = channel_map.find(view.channel->id);
         if (ch_it == channel_map.end()) continue;
         const auto schema_it = schemas.find(view.channel->schemaId);

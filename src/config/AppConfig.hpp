@@ -7,6 +7,8 @@
 struct AppConfig {
     bool        tui_mode      = false;
     bool        gui_mode      = false;
+    bool        headless_mode = false;   // no UI: print frames / log (the former default)
+    bool        config_found  = false;   // a config file was loaded or interfaces were given on the command line
     bool        log_mode      = false;
     bool        debug_mode    = false;
     bool        grpc_server   = false;

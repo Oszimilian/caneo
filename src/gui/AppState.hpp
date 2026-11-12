@@ -47,6 +47,17 @@ public:
     // Stores the Debug view's current session in config().debug_history (newest first).
     void record_debug_session();
 
+    // The XCP view registers a function returning its state (ELF, measured variables, plots) -> config().xcp on save.
+    void set_xcp_snapshot(std::function<XcpConfig()> fn) { xcp_snapshot_ = std::move(fn); }
+
+    // Scalar values for the running log (MCAP topic name). May be called from any thread; set once at start-up.
+    void set_scalar_log(std::function<void(const std::string&, double)> fn) { scalar_log_ = std::move(fn); }
+    void log_scalar(const std::string& topic, double value) const { if (scalar_log_) scalar_log_(topic, value); }
+
+    // The flow editor hands over diagrams that were edited but not applied yet, so Save writes what the user sees.
+    void set_flow_override(std::function<void(std::vector<FlowSpec>&)> fn) { flow_override_ = std::move(fn); }
+    void set_unapplied_note(std::string note) const { unapplied_note_ = std::move(note); }
+
     // Edited config + current actions + current graphs.
     Config collect() const;
 
@@ -83,6 +94,10 @@ private:
     bool                    restart_requested_ = false;
     std::string             saved_yaml_;           // content of the last save/load
     std::function<std::optional<DebugSession>()> debug_snapshot_;
+    std::function<void(std::vector<FlowSpec>&)>  flow_override_;
+    std::function<XcpConfig()>                   xcp_snapshot_;
+    std::function<void(const std::string&, double)> scalar_log_;
+    mutable std::string                          unapplied_note_;
     double                  autosave_due_ = -1.0;
     double                  last_autosave_time_ = -1.0;
 

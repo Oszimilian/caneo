@@ -38,7 +38,8 @@ void flatten(SeriesMap& map, LogDocument::Data& d)
 }
 
 // BLF raw frames -> series, one DBC per interface.
-void decode_raws(LogDocument::Data& d, const std::map<std::string, std::string>& dbcs, std::atomic<uint64_t>& progress)
+void decode_raws(LogDocument::Data& d, const std::map<std::string, std::string>& dbcs, std::atomic<uint64_t>& progress,
+                 std::atomic<double>& fraction)
 {
     d.series.clear();
     d.unmatched.clear();
@@ -59,7 +60,8 @@ void decode_raws(LogDocument::Data& d, const std::map<std::string, std::string>&
     SeriesMap map;
     std::map<std::pair<uint16_t, uint32_t>, LogDocument::Unmatched> unmatched;
     for (const auto& raw : *d.raws) {
-        ++progress;
+        if ((++progress & 0x3FF) == 0)
+            fraction = static_cast<double>(progress) / static_cast<double>(d.raws->size());
         const auto dec = decoders.find(raw.channel);
         CanFrame frame(CanHeader{raw.id, d.channels[raw.channel], static_cast<uint8_t>(raw.data.size())}, raw.data);
         if (dec != decoders.end())
@@ -93,7 +95,7 @@ LogDocument::~LogDocument() = default;   // jthread joins
 
 std::string LogDocument::status() const
 {
-    if (busy_) return std::format("loading... {} frames", progress_.load());
+    if (busy_) return std::format("{}... {:.0f} %", decoding_ ? "decoding" : "loading", fraction_.load() * 100.0);
     std::lock_guard lock(mutex_);
     return status_;
 }
@@ -128,6 +130,8 @@ void LogDocument::open(std::string path, std::vector<std::string> fallback_names
     if (busy_) return;
     busy_     = true;
     progress_ = 0;
+    fraction_ = 0.0;
+    decoding_ = false;
     worker_   = std::jthread([this, path = std::move(path), names = std::move(fallback_names),
                               dbcs = std::move(dbcs)] {
         Data d;
@@ -152,7 +156,7 @@ void LogDocument::open(std::string path, std::vector<std::string> fallback_names
                         s.v.push_back(sig.value);
                     }
                     return true;
-                });
+                }, [this](double f) { fraction_ = f; });
                 for (const auto& [iface, n] : d.frames) d.interfaces.push_back(iface);
                 flatten(map, d);
             } else if (auto* blf = dynamic_cast<BlfReader*>(reader.get())) {
@@ -168,17 +172,21 @@ void LogDocument::open(std::string path, std::vector<std::string> fallback_names
                     ++per_channel[fr.channel];
                     ++progress_;
                     return true;
-                });
+                }, [this](double f) { fraction_ = f; });
                 for (const auto& [ch, n] : per_channel) {
                     const std::string name = blf->channel_name(ch);
                     d.channels[ch]  = name;
                     d.frames[name] += n;
-                    d.interfaces.push_back(name);
+                    // Several channels can carry the same name; DBCs are per name, so list it once.
+                    if (std::ranges::find(d.interfaces, name) == d.interfaces.end())
+                        d.interfaces.push_back(name);
                 }
                 if (!raws->empty()) d.duration = raws->back().t;
                 d.raws = std::move(raws);
                 progress_ = 0;
-                decode_raws(d, dbcs, progress_);
+                fraction_ = 0.0;
+                decoding_ = true;
+                decode_raws(d, dbcs, progress_, fraction_);
             }
         } catch (const std::exception& e) {
             finish(std::move(d), e.what());
@@ -193,12 +201,14 @@ void LogDocument::decode(std::map<std::string, std::string> dbcs)
     if (busy_ || data_.format != Format::Blf) return;
     busy_     = true;
     progress_ = 0;
+    fraction_ = 0.0;
+    decoding_ = true;
     Data base;   // everything but the (large) series
     base.path = data_.path;       base.format = data_.format;   base.interfaces = data_.interfaces;
     base.frames = data_.frames;   base.raws = data_.raws;       base.channels = data_.channels;
     worker_   = std::jthread([this, d = std::move(base), dbcs = std::move(dbcs)]() mutable {
         try {
-            decode_raws(d, dbcs, progress_);
+            decode_raws(d, dbcs, progress_, fraction_);
         } catch (const std::exception& e) {
             finish(std::move(d), e.what());
             return;

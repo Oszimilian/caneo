@@ -60,6 +60,10 @@ SocketCAN::SocketCAN(boost::asio::io_context& io, std::string interface)
         throw std::runtime_error("Failed to set CAN_RAW_RECV_OWN_MSGS on: " + interface_);
     }
 
+    // Receive (and allow sending) CAN FD frames. Classic frames still arrive as struct can_frame (CAN_MTU).
+    int fd_frames = 1;
+    fd_enabled_ = ::setsockopt(fd, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &fd_frames, sizeof(fd_frames)) == 0;
+
     // Ask the kernel to attach RX timestamps to incoming frames. Hardware
     // timestamps are used when the controller provides them, otherwise the
     // kernel software (driver RX) timestamp is delivered. Best-effort: if the
@@ -114,7 +118,7 @@ void SocketCAN::asyncRead() {
 }
 
 bool SocketCAN::readFrame() {
-    struct can_frame raw {};
+    struct canfd_frame raw {};
     struct iovec iov {
         .iov_base = &raw,
         .iov_len  = sizeof(raw),
@@ -129,7 +133,8 @@ bool SocketCAN::readFrame() {
     const ssize_t n = ::recvmsg(descriptor_.native_handle(), &msg, 0);
     if (n < 0)
         return false;  // EAGAIN/EWOULDBLOCK (drained) or error
-    if (static_cast<std::size_t>(n) < sizeof(raw))
+    const bool is_fd = static_cast<std::size_t>(n) == CANFD_MTU;
+    if (!is_fd && static_cast<std::size_t>(n) != CAN_MTU)
         return true;   // runt frame, skip but keep draining
 
     // Extract the RX timestamp (prefer hardware, fall back to software).
@@ -152,11 +157,14 @@ bool SocketCAN::readFrame() {
         break;
     }
 
-    std::vector<uint8_t> payload(raw.data, raw.data + raw.can_dlc);
+    const uint8_t len = std::min<uint8_t>(raw.len, is_fd ? CANFD_MAX_DLEN : CAN_MAX_DLEN);
+    std::vector<uint8_t> payload(raw.data, raw.data + len);
     CanHeader header{
         .id        = raw.can_id & CAN_EFF_MASK,
         .interface = interface_,
-        .dlc       = raw.can_dlc,
+        .dlc       = len,
+        .fd        = is_fd,
+        .brs       = is_fd && (raw.flags & CANFD_BRS) != 0,
     };
 
     auto frame = std::make_unique<CanFrame>(std::move(header), std::move(payload));
@@ -168,7 +176,28 @@ bool SocketCAN::readFrame() {
     return true;
 }
 
-void SocketCAN::send(uint64_t id, const std::vector<uint8_t>& data) {
+// Smallest valid CAN FD payload length >= n (0..8, 12, 16, 20, 24, 32, 48, 64).
+static std::size_t canfd_len(std::size_t n) {
+    constexpr std::size_t LENS[] = {12, 16, 20, 24, 32, 48, 64};
+    if (n <= 8) return n;
+    for (auto l : LENS)
+        if (n <= l) return l;
+    return 64;
+}
+
+void SocketCAN::send(uint64_t id, const std::vector<uint8_t>& data, bool fd) {
+    if ((fd || data.size() > CAN_MAX_DLEN) && fd_enabled_) {
+        struct canfd_frame frame{};
+        frame.can_id = static_cast<canid_t>(id & CAN_EFF_MASK);
+        if (frame.can_id > CAN_SFF_MASK)
+            frame.can_id |= CAN_EFF_FLAG;
+        const std::size_t n = std::min(data.size(), std::size_t{CANFD_MAX_DLEN});
+        frame.len   = static_cast<uint8_t>(canfd_len(n));
+        frame.flags = CANFD_BRS;
+        std::copy_n(data.begin(), n, frame.data);   // padding stays 0
+        boost::asio::write(descriptor_, boost::asio::buffer(&frame, sizeof(frame)));
+        return;
+    }
     struct can_frame frame{};
     frame.can_id  = static_cast<canid_t>(id & CAN_EFF_MASK);
     // Received frames carry the ID without flags; anything above 11 bit must

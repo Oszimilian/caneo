@@ -2,17 +2,20 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
 namespace fs = std::filesystem;
 
 void FileBrowser::open(std::string title, Mode mode, std::vector<std::string> extensions,
-                       const fs::path& start)
+                       const fs::path& start, std::function<bool(const fs::path&)> content, std::string content_label)
 {
-    title_      = std::move(title);
-    mode_       = mode;
-    extensions_ = std::move(extensions);
+    title_         = std::move(title);
+    mode_          = mode;
+    extensions_    = std::move(extensions);
+    content_       = std::move(content);
+    content_label_ = std::move(content_label);
     file_name_.clear();
     error_.clear();
     confirm_overwrite_ = false;
@@ -38,7 +41,18 @@ bool FileBrowser::matches(const fs::path& p) const
         return true;
     std::string ext = p.extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return std::tolower(c); });
-    return std::ranges::find(extensions_, ext) != extensions_.end();
+    if (std::ranges::find(extensions_, ext) != extensions_.end())
+        return true;
+    return content_ && content_(p);
+}
+
+bool FileBrowser::is_elf(const fs::path& p)
+{
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec)) return false;
+    std::ifstream f(p, std::ios::binary);
+    char magic[4] = {};
+    return f.read(magic, 4) && magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
 }
 
 void FileBrowser::refresh()
@@ -158,6 +172,7 @@ std::optional<fs::path> FileBrowser::render()
     else if (!extensions_.empty() && !show_all_) {
         std::string filter;
         for (const auto& e : extensions_) filter += (filter.empty() ? "*" : ", *") + e;
+        if (!content_label_.empty()) filter += ", " + content_label_;
         ImGui::TextDisabled("Filter: %s", filter.c_str());
     } else {
         ImGui::NewLine();

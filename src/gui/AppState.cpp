@@ -1,4 +1,5 @@
 #include "AppState.hpp"
+#include "config/RecentConfigs.hpp"
 #include "flow/Legacy.hpp"
 
 #include <ctime>
@@ -34,6 +35,8 @@ Config AppState::collect() const
     out.flows.clear();
     for (const auto& f : flows_.snapshot())
         out.flows.push_back(f.spec);
+    if (flow_override_) flow_override_(out.flows);
+    if (xcp_snapshot_) out.xcp = xcp_snapshot_();
     return out;
 }
 
@@ -68,11 +71,13 @@ bool AppState::save(const std::string& path)
 {
     try {
         record_debug_session();
+        unapplied_note_.clear();
         const Config c = collect();
         save_config(c, path);
         saved_yaml_ = config_to_yaml(c);
         path_ = path;
-        set_status(std::format("Saved {}", path));
+        remember_config(path);
+        set_status(std::format("Saved {}", path) + (unapplied_note_.empty() ? "" : " - " + unapplied_note_));
         return true;
     } catch (const std::exception& e) {
         set_status(std::format("Save failed: {}", e.what()), true);
@@ -93,6 +98,7 @@ bool AppState::load(const std::string& path)
 
     config_ = loaded;
     path_   = path;
+    remember_config(path);
     warnings_.clear();
 
     flows_.clear();

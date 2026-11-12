@@ -11,12 +11,15 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 class DebugView;
 class FlowEditorWindow;
 class ModelWindow;
+class PipelineWindow;
 class DbcEditor;
+class XcpView;
 class ILogControl;
 class SettingsWindow;
 
@@ -24,7 +27,7 @@ class Gui {
 public:
     // iface_configs: the running channels (one trace tab each).
     // Live = the normal windows; Debug = full-screen offline log viewer.
-    enum class Mode { Live, Debug, Dbc };
+    enum class Mode { Live, Debug, Dbc, Xcp, Settings };
 
     Gui(const std::vector<InterfaceConfig>& iface_configs, AppState& state);
     ~Gui();
@@ -53,10 +56,24 @@ public:
     // the current log file path. May be called before run().
     void set_log_controller(ILogControl* lc);
 
+    // "Start" / "Stop" in the menu bar: start sets the interfaces up (may ask for the password) and opens the sockets,
+    // stop closes them. Nothing is opened before the user presses Start.
+    struct ChannelResult {
+        bool        running = false;   // at least one channel is open
+        std::string message;
+    };
+    void          set_channel_control(std::function<ChannelResult(bool graphical)> start, std::function<void()> stop);
+    ChannelResult start_channels_now(bool graphical);   // synchronous (used for --log)
+
+    // No config file was found: show the Settings with the "load config" dialog open.
+    void search_config() { search_config_ = true; }
+
 private:
     void render_menu_bar();
     void render_mode_toggle(); // centre of the menu bar
     void render_status(); // right side of the menu bar
+    void render_channel_button();
+    void render_welcome();
     void build_default_layout(unsigned int dockspace_id);
     void render_log_dialog();
     void open_in_viewer(const std::string& file);
@@ -66,6 +83,7 @@ private:
     SettingsWindow*                      settings_window_ = nullptr;
     FlowEditorWindow*                    flow_window_     = nullptr;
     Window*                              flows_list_      = nullptr;
+    std::unique_ptr<PipelineWindow>      pipeline_;   // lives in the Settings tab
     std::vector<std::unique_ptr<Window>> windows_;
     std::atomic<bool>                    stop_requested_{false};
     std::string                          status_label_;
@@ -82,9 +100,21 @@ private:
     std::string viewer_error_;
     double      viewer_error_time_ = 0.0;
 
+    // channel start / stop
+    std::function<ChannelResult(bool)> channel_start_;
+    std::function<void()>              channel_stop_;
+    std::atomic<bool>                  channels_running_{false};
+    std::atomic<bool>                  channels_starting_{false};
+    ChannelResult                      start_result_;
+    std::jthread                       starter_;
+    bool                               search_config_ = false;
+    std::vector<std::string>           recent_;
+    FileBrowser                        welcome_browser_;
+
     Mode                        mode_ = Mode::Live;
     std::unique_ptr<DebugView>  debug_view_;
     std::unique_ptr<DbcEditor>  dbc_editor_;
+    std::unique_ptr<XcpView>    xcp_view_;
 
     bool  reset_layout_   = false;
     float status_width_   = 0.0f;  // width of the menu bar status group (last frame)

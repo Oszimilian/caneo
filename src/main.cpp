@@ -1,6 +1,7 @@
 #include "config/AppConfig.hpp"
 #include "compat/print.hpp"
 #include "logger/LogReader.hpp"
+#include "modes/config_picker.hpp"
 #include "modes/run_gui.hpp"
 #include "modes/run_live.hpp"
 #include "modes/run_playback.hpp"
@@ -37,13 +38,27 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Terminal UI without a config: let the user search one (the GUI opens its own dialog).
+    if (!app.config_found && app.playback_path.empty() && app.tui_mode) {
+        const auto chosen = pick_config_tui();
+        if (!chosen) return 0;
+        try {
+            app.config      = load_config(*chosen);
+            app.config_path = *chosen;
+        } catch (const std::exception& e) {
+            std::println(stderr, "Error loading config: {}", e.what());
+            return 1;
+        }
+    }
+
     // The GUI can start without interfaces: channels are set up in Settings.
     if (app.config.interfaces.empty() && app.playback_path.empty() && !app.gui_mode) {
         std::println(stderr, "Error: no interfaces specified and no caneo.yaml found.");
         return 1;
     }
 
-    if (!app.config.interfaces.empty() && app.grpc_client.empty()) {
+    // The GUI sets the interfaces up when "Start" is pressed (no password prompt before that).
+    if (!app.gui_mode && !app.config.interfaces.empty() && app.grpc_client.empty()) {
         try {
             setup_interfaces(app.config);
         } catch (const std::exception& e) {

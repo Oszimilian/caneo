@@ -212,6 +212,7 @@ std::optional<DebugSession> DebugView::snapshot() const
     for (const auto& t : tabs_) {
         DebugTabConfig tc;
         tc.name = t.name;
+        tc.xy   = t.xy;
         for (const auto& p : t.plots) {
             std::vector<std::string> labels;
             for (const auto si : p.series)
@@ -272,9 +273,15 @@ void DebugView::load(const std::string& path)
     log_path_ = path;
     std::vector<std::string> names;
     for (const auto& cfg : state_.config().interfaces) {
-        names.push_back(cfg.name);
         if (!cfg.dbc.empty() && !dbcs_.contains(cfg.name))
             dbcs_[cfg.name] = cfg.dbc;
+    }
+    // BLF channel n is "can<n>" unless blf_channels names it (config order of the interfaces is not used).
+    for (const auto& [ch, name] : state_.config().blf_channels) {
+        if (ch < 1) continue;
+        while (names.size() < static_cast<std::size_t>(ch))
+            names.push_back(std::format("can{}", names.size() + 1));
+        names[static_cast<std::size_t>(ch) - 1] = name;
     }
     doc_.open(path, names, dbcs_);
 }
@@ -291,6 +298,7 @@ void DebugView::on_data_changed()
     }
 
     ++data_version_;
+    ++xy_epoch_;
 
     // series indices of the old document are meaningless now
     for (auto& t : tabs_) {
@@ -309,6 +317,7 @@ void DebugView::on_data_changed()
         for (const auto& tc : restore_->tabs) {
             PlotTab tab;
             tab.name = tc.name;
+            tab.xy   = tc.xy;
             tab.plots.clear();
             for (const auto& labels : tc.plots) {
                 Plot p;
@@ -374,6 +383,7 @@ void DebugView::apply_flows(bool keep_plots)
         }
         doc_.set_extra_series(std::move(extra));
     }
+    ++xy_epoch_;
     rebuild_tree();
 
     if (keep_plots) {
@@ -395,6 +405,7 @@ void DebugView::add_signal(std::size_t plot, std::size_t series_idx)
     auto& tab = tabs_[current_tab_];
     if (plot >= tab.plots.size()) return;
     auto& v = tab.plots[plot].series;
+    if (tab.xy && v.size() >= 2) return;   // XY: exactly two signals, "Clear" to change them
     if (std::ranges::find(v, series_idx) == v.end()) {
         // first signal: whole log in X; always fit Y so the new signal is fully visible
         tab.plots[plot].fit_x = tab.plots[plot].fit_x || v.empty();
@@ -591,9 +602,10 @@ void DebugView::render_files()
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    if (doc_.busy())
-        ImGui::TextUnformatted(doc_.status().c_str());
-    else if (doc_.loaded())
+    if (doc_.busy()) {
+        const std::string text = doc_.status();
+        ImGui::ProgressBar(static_cast<float>(doc_.fraction()), ImVec2(-FLT_MIN, 0.0f), text.c_str());
+    } else if (doc_.loaded())
         ImGui::TextDisabled("%s  %s", format_name(doc_.data().format), doc_.status().c_str());
     else if (!doc_.status().empty())
         ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", doc_.status().c_str());
@@ -785,9 +797,11 @@ void DebugView::render_plot_tabs()
         return;
 
     std::optional<std::size_t> close;
-    bool add = false;
+    bool add = false, add_xy = false;
     if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
         add = true;
+    if (ImGui::TabItemButton("New XY plot", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
+        add_xy = true;
 
     for (std::size_t i = 0; i < tabs_.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
@@ -804,7 +818,8 @@ void DebugView::render_plot_tabs()
         if (sel) {
             current_tab_ = i;
             render_plot_toolbar();
-            render_plots(tabs_[i]);
+            if (tabs_[i].xy) render_xy(tabs_[i]);
+            else             render_plots(tabs_[i]);
             ImGui::EndTabItem();
         }
         if (!keep) close = i;
@@ -851,17 +866,25 @@ void DebugView::render_plot_tabs()
         tabs_.push_back(PlotTab{"Plot " + std::to_string(++tab_counter_)});
         current_tab_ = tabs_.size() - 1;
     }
+    if (add_xy) {
+        PlotTab t{"XY " + std::to_string(++tab_counter_)};
+        t.xy = true;
+        tabs_.push_back(std::move(t));
+        current_tab_ = tabs_.size() - 1;
+    }
 }
 
 void DebugView::render_plot_toolbar()
 {
     auto& tab = tabs_[current_tab_];
+    ImGui::BeginDisabled(tab.xy);
     if (ImGui::Button("+ Plot")) {
         tab.plots.emplace_back();
         tab.active_plot = tab.plots.size() - 1;
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(tab.plots.size() <= 1);
+    ImGui::BeginDisabled(tab.xy || tab.plots.size() <= 1);
     if (ImGui::Button("- Plot")) {
         tab.plots.erase(tab.plots.begin() + static_cast<std::ptrdiff_t>(std::min(tab.active_plot, tab.plots.size() - 1)));
         tab.active_plot = std::min(tab.active_plot, tab.plots.size() - 1);
@@ -873,13 +896,24 @@ void DebugView::render_plot_toolbar()
     if (ImGui::Button("Clear"))
         for (auto& p : tab.plots) p.series.clear();
     ImGui::SameLine();
-    if (ImGui::Button("Default")) {
-        for (auto& p : tab.plots) p.fit_x = p.fit_y = true;
-        tab.row_ratios.clear();   // equal heights again
-    }
+    if (ImGui::Button("Default"))
+        default_view(tab);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Default view: equal plot heights, whole log in X, all data in Y (all plots of this tab)");
+        ImGui::SetTooltip("Default view: equal plot heights, whole log in X, all data in Y (all plots of this tab)  [Space]");
     ImGui::SameLine();
+    ImGui::BeginDisabled(tab.undo.empty() && !tab.in_burst);
+    if (ImGui::Button("Undo"))
+        undo_view(tab);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Undo the last zoom / pan / Default  [Delete / Backspace]");
+    ImGui::SameLine();
+
+    // Shortcuts, not while typing into a text field
+    if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) default_view(tab);
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) undo_view(tab);
+    }
     ImGui::BeginDisabled(!doc_.loaded() || doc_.busy());
     if (ImGui::Button("Export CSV"))
         browse_ = Browse::Csv;
@@ -915,8 +949,80 @@ void DebugView::render_plot_toolbar()
     ImGui::TextDisabled("Drag signals into a plot; right-drag = zoom rectangle (narrow: Y only, flat: X only); legend right-click = remove.");
 }
 
+void DebugView::default_view(PlotTab& tab)
+{
+    for (auto& p : tab.plots) p.fit_x = p.fit_y = true;
+    tab.row_ratios.clear();   // equal heights again
+}
+
+static bool views_differ(const DebugView::PlotTab::View& a, const DebugView::PlotTab::View& b)
+{
+    const auto far = [](double u, double v, double span) { return std::abs(u - v) > 1e-9 * std::max(span, 1e-12); };
+    if (far(a.x0, b.x0, a.x1 - a.x0) || far(a.x1, b.x1, a.x1 - a.x0)) return true;
+    if (a.has_y && b.has_y && a.y.size() == b.y.size())
+        for (std::size_t i = 0; i < a.y.size(); ++i)
+            if (far(a.y[i].first, b.y[i].first, a.y[i].second - a.y[i].first) ||
+                far(a.y[i].second, b.y[i].second, a.y[i].second - a.y[i].first))
+                return true;
+    return false;
+}
+
+// Called every frame with the limits of all plots; a burst of changes (drag, wheel) becomes one undo step.
+void DebugView::record_view(PlotTab& tab, const PlotTab::View& now)
+{
+    if (now.y.size() != tab.plots.size()) return;   // a plot was not drawn this frame
+    const double t = ImGui::GetTime();
+    if (tab.skip_frames > 0) {
+        --tab.skip_frames;
+        tab.last = now;
+        tab.last_valid = true;
+        tab.in_burst   = false;
+        return;
+    }
+    if (!tab.last_valid || tab.last.y.size() != now.y.size()) {
+        tab.last = now;
+        tab.last_valid = true;
+        tab.undo.clear();
+        tab.in_burst = false;
+        return;
+    }
+    if (views_differ(tab.last, now)) {
+        if (!tab.in_burst) {
+            tab.in_burst    = true;
+            tab.burst_start = tab.last;
+        }
+        tab.last_change = t;
+    } else if (tab.in_burst && t - tab.last_change > 0.4) {
+        tab.in_burst = false;
+        if (views_differ(tab.burst_start, now)) {
+            tab.undo.push_back(tab.burst_start);
+            if (tab.undo.size() > 100) tab.undo.erase(tab.undo.begin());
+        }
+    }
+    tab.last = now;
+}
+
+void DebugView::undo_view(PlotTab& tab)
+{
+    if (tab.in_burst) {   // close the running burst first
+        tab.in_burst = false;
+        if (views_differ(tab.burst_start, tab.last)) tab.undo.push_back(tab.burst_start);
+    }
+    if (tab.undo.empty()) return;
+    const PlotTab::View v = tab.undo.back();
+    tab.undo.pop_back();
+    if (v.y.size() != tab.plots.size()) return;
+    for (std::size_t i = 0; i < tab.plots.size(); ++i) {
+        tab.plots[i].zoom_x = std::pair{v.x0, v.x1};
+        if (v.has_y) tab.plots[i].zoom_y = v.y[i];
+    }
+    tab.skip_frames = 2;
+}
+
 void DebugView::render_plots(PlotTab& tab)
 {
+    PlotTab::View now;
+    now.has_y = !auto_y_;
     const auto& d = doc_.data();
     const ImVec2 size = ImGui::GetContentRegionAvail();
     auto& plots_ = tab.plots;
@@ -966,6 +1072,8 @@ void DebugView::render_plots(PlotTab& tab)
 
         // visible range, used to decimate (whole range on a fit frame)
         const ImPlotRect lim = ImPlot::GetPlotLimits();
+        if (pi == 0) { now.x0 = lim.X.Min; now.x1 = lim.X.Max; }
+        now.y.emplace_back(lim.Y.Min, lim.Y.Max);
         const double     x0  = full ? 0.0 : lim.X.Min;
         const double     x1  = full ? d.duration : lim.X.Max;
         const int        px  = std::max(64, static_cast<int>(ImPlot::GetPlotSize().x));
@@ -1172,11 +1280,97 @@ void DebugView::render_plots(PlotTab& tab)
         ImPlot::EndPlot();
     }
     ImPlot::EndSubplots();
+    record_view(tab, now);
     cursor_valid_ = hovered_any;
     if (close_plot && plots_.size() > 1) {
         plots_.erase(plots_.begin() + static_cast<std::ptrdiff_t>(*close_plot));
         tab.active_plot = std::min(tab.active_plot, plots_.size() - 1);
     }
+}
+
+// XY plot: the first signal is X, the second Y. Y is interpolated onto the sample times of X.
+void DebugView::render_xy(PlotTab& tab)
+{
+    const auto& d = doc_.data();
+    auto&       plot = tab.plots.front();
+    tab.active_plot  = 0;
+
+    const bool two = plot.series.size() == 2 && plot.series[0] < d.series.size() && plot.series[1] < d.series.size();
+    ImGui::Checkbox("Equal axes", &tab.xy_equal);
+    ImGui::SameLine();
+    if (two)
+        ImGui::TextDisabled("X = %s    Y = %s", d.series[plot.series[0]].label.c_str(), d.series[plot.series[1]].label.c_str());
+    else
+        ImGui::TextDisabled("Drag two signals into the plot: the first is X, the second is Y (%zu/2).", plot.series.size());
+
+    if (two) {
+        const auto& sx = d.series[plot.series[0]];
+        const auto& sy = d.series[plot.series[1]];
+        const std::vector<std::size_t> key{plot.series[0], plot.series[1], sx.t.size(), sy.t.size(), xy_epoch_};
+        if (tab.xy_key != key) {
+            tab.xy_key = key;
+            tab.xy_x.clear();
+            tab.xy_y.clear();
+            for (std::size_t i = 0; i < sx.t.size(); ++i) {
+                const double t = sx.t[i];
+                if (sy.t.empty() || t < sy.t.front() || t > sy.t.back()) continue;
+                const auto it = std::lower_bound(sy.t.begin(), sy.t.end(), t);
+                const std::size_t j = static_cast<std::size_t>(it - sy.t.begin());
+                double y = sy.v[j];
+                if (j > 0 && sy.t[j] > t) {
+                    const double t0 = sy.t[j - 1], t1 = sy.t[j];
+                    y = sy.v[j - 1] + (sy.v[j] - sy.v[j - 1]) * (t - t0) / (t1 - t0);
+                }
+                tab.xy_x.push_back(sx.v[i]);
+                tab.xy_y.push_back(y);
+            }
+            plot.fit_x = plot.fit_y = true;
+        }
+    } else if (!tab.xy_key.empty()) {
+        tab.xy_key.clear();
+        tab.xy_x.clear();
+        tab.xy_y.clear();
+    }
+
+    if (tab.fit_requested || plot.fit_x || plot.fit_y) {
+        ImPlot::SetNextAxesToFit();
+        tab.fit_requested = plot.fit_x = plot.fit_y = false;
+    }
+    if (plot.zoom_x) { ImPlot::SetNextAxisLimits(ImAxis_X1, plot.zoom_x->first, plot.zoom_x->second, ImPlotCond_Always); plot.zoom_x.reset(); }
+    if (plot.zoom_y) { ImPlot::SetNextAxisLimits(ImAxis_Y1, plot.zoom_y->first, plot.zoom_y->second, ImPlotCond_Always); plot.zoom_y.reset(); }
+
+    if (!ImPlot::BeginPlot("##xyplot", ImVec2(-1, -1), ImPlotFlags_NoTitle | (tab.xy_equal ? ImPlotFlags_Equal : 0)))
+        return;
+    std::string xl = "x", yl = "y";
+    if (two) {
+        const auto& sx = d.series[plot.series[0]];
+        const auto& sy = d.series[plot.series[1]];
+        xl = sx.unit.empty() ? sx.label : sx.label + " [" + sx.unit + "]";
+        yl = sy.unit.empty() ? sy.label : sy.label + " [" + sy.unit + "]";
+    }
+    ImPlot::SetupAxes(xl.c_str(), yl.c_str());
+    ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+
+    if (two && !tab.xy_x.empty()) {
+        // very long logs: thin out evenly
+        const std::size_t n = tab.xy_x.size(), max_pts = 200000;
+        const int stride = static_cast<int>(std::max<std::size_t>(1, (n + max_pts - 1) / max_pts));
+        ImPlot::PlotLine("path", tab.xy_x.data(), tab.xy_y.data(), static_cast<int>(n / static_cast<std::size_t>(stride)), 0, 0,
+                         static_cast<int>(sizeof(double)) * stride);
+        // start / end
+        const double sxp[2] = {tab.xy_x.front(), tab.xy_x.back()}, syp[2] = {tab.xy_y.front(), tab.xy_y.back()};
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6);
+        ImPlot::PlotScatter("start", &sxp[0], &syp[0], 1);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 6);
+        ImPlot::PlotScatter("end", &sxp[1], &syp[1], 1);
+    }
+
+    if (ImPlot::BeginDragDropTargetPlot()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CANEO_SIGNAL"))
+            add_signal(0, *static_cast<const std::size_t*>(p->Data));
+        ImPlot::EndDragDropTarget();
+    }
+    ImPlot::EndPlot();
 }
 
 // ─── spectrum ───────────────────────────────────────────────────────────────

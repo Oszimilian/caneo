@@ -216,6 +216,9 @@ DbcDoc DbcDoc::parse(const std::string& text)
     std::vector<PendingComment> comments;
     struct PendingValues { uint32_t id; std::string sig; std::vector<std::pair<int64_t, std::string>> v; };
     std::vector<PendingValues> value_tables;
+    struct PendingType { uint32_t id; std::string sig; int type; };
+    std::vector<PendingType> value_types;
+    const std::regex valtype_re(R"(^SIG_VALTYPE_\s+(\d+)\s+(\S+)\s*:\s*(\d+)\s*;)");
 
     bool in_ns = false;   // NS_ lists keywords (e.g. "BA_DEF_") on indented lines: not statements
     for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -294,6 +297,10 @@ DbcDoc DbcDoc::parse(const std::string& text)
                     pv.v.emplace_back(static_cast<int64_t>(to_double(t[k].text)), t[k + 1].text);
                 value_tables.push_back(std::move(pv));
             }
+        } else if (line.rfind("SIG_VALTYPE_", 0) == 0) {
+            std::smatch m;
+            if (std::regex_search(line, m, valtype_re))
+                value_types.push_back({static_cast<uint32_t>(std::stoull(m[1])), m[2], std::stoi(m[3])});
         } else if (line.rfind("BA_", 0) == 0) {
             doc.extra.push_back(statement(i));
         }
@@ -310,6 +317,10 @@ DbcDoc DbcDoc::parse(const std::string& text)
                 s->comment = c.text;
         }
     }
+    for (const auto& t : value_types)
+        if (auto* m = find_message(doc, t.id))
+            if (auto* s = find_signal(*m, t.sig))
+                s->float_type = t.type == 1 || t.type == 2 ? t.type : 0;
     for (auto& v : value_tables)
         if (auto* m = find_message(doc, v.id))
             if (auto* s = find_signal(*m, v.sig))
@@ -356,6 +367,10 @@ std::string DbcDoc::to_string() const
     }
     for (const auto& e : extra)
         o << e << '\n';
+    for (const auto& m : messages)
+        for (const auto& s : m.signals)
+            if (s.float_type != 0)
+                o << "SIG_VALTYPE_ " << raw_id(m) << ' ' << s.name << " : " << s.float_type << ";\n";
     for (const auto& m : messages)
         for (const auto& s : m.signals) {
             if (s.values.empty())
@@ -460,6 +475,10 @@ std::vector<std::string> DbcDoc::problems() const
                     out.push_back(st + ": does not fit into the message");
                     break;
                 }
+            if (s.float_type == 1 && s.bit_size != 32)
+                out.push_back(st + ": float needs 32 bits");
+            if (s.float_type == 2 && s.bit_size != 64)
+                out.push_back(st + ": double needs 64 bits");
             if (s.max < s.min)
                 out.push_back(st + ": max < min");
         }

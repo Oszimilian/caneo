@@ -96,12 +96,15 @@ public:
 
     // can_out block: send its message on the next step (asio thread)
     void trigger(int node_id);
+    // slider: new value; button: one pulse (asio thread)
+    void set_control(int node_id, double value);
 
     void start();   // asio thread
     void stop();    // asio thread
 
     // Script template for new Lua blocks.
     static const char* LUA_TEMPLATE;
+    static const char* LUA_POSITION_TEMPLATE;   // vx, vy, yaw rate -> X, Y
 
 private:
     struct Node;

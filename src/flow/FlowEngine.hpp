@@ -34,6 +34,8 @@ public:
     void clear();
     // Sends the message of a can_out block now (the flow has to be running).
     void trigger(std::size_t idx, int node_id);
+    // slider value / button press of a running flow
+    void set_control(std::size_t idx, int node_id, double value);
 
     std::vector<FlowInfo> snapshot() const;
 

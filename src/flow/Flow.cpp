@@ -12,6 +12,27 @@
 #include <numbers>
 #include <sol/sol.hpp>
 
+const char* Flow::LUA_POSITION_TEMPLATE = R"(-- Position from vx, vy (vehicle frame) and yaw rate: rotate first, then integrate.
+--   psi = integral(yaw_rate dt)                  (yaw_rate in rad/s)
+--   vX = vx cos(psi) - vy sin(psi)
+--   vY = vx sin(psi) + vy cos(psi)
+--   X = integral(vX dt), Y = integral(vY dt)
+-- Outputs: X, Y, psi (rad), vX, vY. t = seconds since the flow started.
+
+local psi, X, Y, last = 0, 0, 0, nil
+
+function step(vx, vy, yaw_rate, t)
+    local dt = last and (t - last) or 0
+    last = t
+    psi = psi + yaw_rate * dt
+    local vX = vx * math.cos(psi) - vy * math.sin(psi)
+    local vY = vx * math.sin(psi) + vy * math.cos(psi)
+    X = X + vX * dt
+    Y = Y + vY * dt
+    return { X = X, Y = Y, psi = psi, vX = vX, vY = vY }
+end
+)";
+
 const char* Flow::LUA_TEMPLATE = R"(-- Lua block: one input u, one output y.
 -- step(u, t) runs every flow step. t = seconds since the flow started.
 -- Variables outside of step() keep their value between steps.
@@ -32,8 +53,11 @@ end
 int flow_in_ports(const FlowNodeSpec& n)
 {
     if (n.type == "can_out") return static_cast<int>(n.signals.size());
-    if (n.type == "lua" || n.type == "scope" || n.type == "diff" || n.type == "movavg" || n.type == "fft") return 1;
-    if (n.type == "add" || n.type == "compare") return 2;
+    if (n.type == "lua") return std::max<int>(1, static_cast<int>(n.inputs.size()));
+    if (n.type == "scope" || n.type == "diff" || n.type == "movavg" || n.type == "fft" ||
+        n.type == "gain" || n.type == "integrator" || n.type == "sin" || n.type == "cos") return 1;
+    if (n.type == "add" || n.type == "mul" || n.type == "compare" || n.type == "rs") return 2;
+    if (n.type == "switch") return 3;
     if (n.type == "csv") return static_cast<int>(n.signals.size());
     return 0;
 }
@@ -42,16 +66,17 @@ int flow_out_ports(const FlowNodeSpec& n)
 {
     if (n.type == "can_in") return static_cast<int>(n.signals.size());
     if (n.type == "lua") return std::max<int>(1, static_cast<int>(n.signals.size()));
-    if (n.type == "generator" || n.type == "const" || n.type == "add" || n.type == "diff" ||
-        n.type == "compare" || n.type == "movavg")
+    if (n.type == "generator" || n.type == "const" || n.type == "add" || n.type == "mul" || n.type == "diff" ||
+        n.type == "compare" || n.type == "movavg" || n.type == "gain" || n.type == "integrator" || n.type == "sin" || n.type == "cos" || n.type == "slider" || n.type == "button" || n.type == "switch")
         return 1;
-    if (n.type == "fft") return 2;
+    if (n.type == "fft" || n.type == "rs") return 2;
     return 0;
 }
 
 bool is_math_block(const std::string& type)
 {
-    return type == "add" || type == "diff" || type == "compare" || type == "movavg" || type == "fft";
+    return type == "add" || type == "mul" || type == "diff" || type == "compare" || type == "movavg" || type == "fft" ||
+           type == "rs" || type == "switch" || type == "gain" || type == "integrator" || type == "sin" || type == "cos";
 }
 
 // In-place radix-2 FFT, n = power of two.
@@ -95,6 +120,27 @@ void math_block_step(const FlowNodeSpec& n, MathState& st, const std::vector<dou
 {
     if (n.type == "add") {
         out[0] = in[0] + in[1];
+    } else if (n.type == "mul") {
+        out[0] = in[0] * in[1];
+    } else if (n.type == "sin" || n.type == "cos") {
+        const double x = n.degrees ? in[0] * std::numbers::pi / 180.0 : in[0];
+        out[0]         = n.type == "sin" ? std::sin(x) : std::cos(x);
+    } else if (n.type == "gain") {
+        out[0] = in[0] * n.gain;
+    } else if (n.type == "integrator") {
+        if (!st.have_prev) { st.prev = n.offset; st.have_prev = true; }
+        st.prev += in[0] * dt;
+        out[0]   = st.prev;
+    } else if (n.type == "rs") {
+        const bool s = in[0] > 0.5, r = in[1] > 0.5;
+        bool       q = st.prev > 0.5;
+        if (n.op == "S") { if (r) q = false; if (s) q = true; }    // set dominant
+        else             { if (s) q = true;  if (r) q = false; }   // reset dominant
+        st.prev = q ? 1.0 : 0.0;
+        out[0]  = st.prev;
+        out[1]  = q ? 0.0 : 1.0;
+    } else if (n.type == "switch") {
+        out[0] = in[2] > 0.5 ? in[1] : in[0];
     } else if (n.type == "diff") {
         const double d = st.have_prev ? in[0] - st.prev : 0.0;
         out[0]         = n.derivative && dt > 0.0 ? d / dt : d;
@@ -205,10 +251,14 @@ struct Flow::Node {
     bool                             sent_once  = false;
     bool                             force      = false;   // send now (trigger)
 
+    // slider / button
+    double                           control = 0.0;
+    bool                             pulse   = false;
+
     // lua send(): last values per (interface, message index)
     std::map<std::pair<std::string, int>, std::vector<double>> send_values;
 
-    MathState math;   // add, diff, compare, movavg, fft
+    MathState math;   // add, gain, integrator, diff, compare, movavg, fft
 
     // lua
     std::unique_ptr<sol::state> lua;
@@ -246,6 +296,7 @@ bool Flow::build(const ModelFn& models)
         node->in.assign(static_cast<std::size_t>(flow_in_ports(ns)), 0.0);
         node->out.assign(static_cast<std::size_t>(flow_out_ports(ns)), 0.0);
         node->sources.assign(node->in.size(), {-1, -1});
+        node->control = ns.value;
         nodes_.push_back(std::move(node));
     }
 
@@ -376,6 +427,19 @@ void Flow::trigger(int node_id)
         if (spec_.nodes[i].id == node_id && spec_.nodes[i].type == "can_out") nodes_[i]->force = true;
 }
 
+void Flow::set_control(int node_id, double value)
+{
+    for (std::size_t i = 0; i < spec_.nodes.size(); ++i) {
+        if (spec_.nodes[i].id != node_id) continue;
+        if (spec_.nodes[i].type == "slider") {
+            nodes_[i]->control      = value;
+            spec_.nodes[i].value    = value;   // saved with the config
+        } else if (spec_.nodes[i].type == "button") {
+            nodes_[i]->pulse = true;
+        }
+    }
+}
+
 void Flow::start()
 {
     if (!loaded_ || running_) return;
@@ -437,8 +501,17 @@ void Flow::tick()
             node.out[0] = generator_value(ns, t, rng_);
         } else if (ns.type == "const") {
             node.out[0] = ns.offset;
+        } else if (ns.type == "slider") {
+            node.out[0] = node.control;
+        } else if (ns.type == "button") {
+            node.out[0] = node.pulse ? 1.0 : 0.0;
+            node.pulse  = false;
         } else if (ns.type == "lua") {
-            const auto r = node.step(node.in[0], t);
+            const auto r = node.in.size() == 1 ? node.step(node.in[0], t) : [&] {
+                std::vector<double> args = node.in;
+                args.push_back(t);
+                return node.step(sol::as_args(args));
+            }();
             if (!r.valid()) {
                 const sol::error e = r;
                 return fail(std::format("block '{}': step(): {}", ns.name, e.what()));

@@ -1,6 +1,7 @@
 #include "run_gui.hpp"
 
 #include "compat/print.hpp"
+#include "config/RecentConfigs.hpp"
 #include "gui/AppState.hpp"
 #include "gui/FlowEditorWindow.hpp"
 #include "flow/FlowEngine.hpp"
@@ -18,6 +19,7 @@
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "grpc/CanStreamServer.hpp"
+#include "setup/InterfaceSetup.hpp"
 #include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
 #include "socket/SocketGrpc.hpp"
@@ -25,6 +27,9 @@
 
 #include <boost/asio.hpp>
 #include <csignal>
+#include <future>
+#include <mutex>
+#include <filesystem>
 #include <format>
 #include <map>
 #include <memory>
@@ -39,6 +44,7 @@ bool run_gui(AppConfig& app)
     std::vector<std::unique_ptr<Socket>> sockets;
     std::map<std::string, SocketCAN*>  socket_map;       // populated in SocketCAN mode
     std::map<std::string, SocketGrpc*> grpc_socket_map;  // populated in grpc_client mode
+    std::mutex                         grpc_map_mutex;   // the render thread reads connected()
 
     SendFn send_fn = [&socket_map, &grpc_socket_map](const std::string& iface, uint64_t id,
                                                       const std::vector<uint8_t>& data) {
@@ -74,6 +80,11 @@ bool run_gui(AppConfig& app)
     apply_graph_config(app.config, *gui->graph_window(),
                        [&model_cache](const std::string& iface) { return model_cache.model_for(iface); });
 
+    if (!app.config_found)
+        gui->search_config();
+    else if (std::filesystem::exists(app.config_path))
+        remember_config(app.config_path);
+
     ProtoLogRegistry proto_registry;
     for (const auto& cfg : app.config.interfaces)
         if (!cfg.dbc.empty())
@@ -95,6 +106,9 @@ bool run_gui(AppConfig& app)
         log_control = std::move(rc);
     }
     gui->set_log_controller(log_control.get());
+    // XCP measurements go into the local log as xcp/<variable>
+    if (local_lc)
+        app_state.set_scalar_log([local_lc](const std::string& topic, double v) { local_lc->log_scalar(topic, v); });
 
     // Scope blocks of the flows: plotted like guard outputs and logged.
     flow_engine.set_output_fn([gui, local_lc](const std::string& flow, const std::string& scope, double v) {
@@ -118,49 +132,100 @@ bool run_gui(AppConfig& app)
         });
     }
 
+    // Decoders need no privileges: build them right away.
     std::vector<std::string> socket_errors;
     for (const auto& cfg : app.config.interfaces) {
-        if (!cfg.dbc.empty()) {
-            try {
-                decoders.add_interface(cfg.name, expand_path(cfg.dbc).string());
-            } catch (const std::exception& e) {
-                std::println(stderr, "Warning: {}", e.what());
-                socket_errors.push_back(std::format("{}: {}", cfg.name, e.what()));
-            }
+        if (cfg.dbc.empty()) continue;
+        try {
+            decoders.add_interface(cfg.name, expand_path(cfg.dbc).string());
+        } catch (const std::exception& e) {
+            std::println(stderr, "Warning: {}", e.what());
+            socket_errors.push_back(std::format("{}: {}", cfg.name, e.what()));
         }
-        std::unique_ptr<Socket> sock;
-        if (app.grpc_client.empty()) {
-            // A missing interface must not kill the GUI: it can be fixed in
-            // Settings, which needs a running GUI.
-            SocketCAN* can = nullptr;
-            try {
-                can = new SocketCAN(io, cfg.name);
-            } catch (const std::exception& e) {
-                std::println(stderr, "Warning: {}", e.what());
-                socket_errors.push_back(e.what());
-                continue;
-            }
-            socket_map[cfg.name] = can;
-            sock.reset(can);
-        } else {
-            auto* gs = new SocketGrpc(io, cfg.name, app.grpc_client);
-            grpc_socket_map[cfg.name] = gs;
-            sock.reset(gs);
-        }
-        auto& socket = sockets.emplace_back(std::move(sock));
-        socket->onFrame([gui, &decoders, local_lc, &model_engine, &grpc_server, &signal_store]
-                        (std::unique_ptr<DataFrame> frame) {
-            auto* f = dynamic_cast<CanFrame*>(frame.get());
-            if (!f) return;
-            if (grpc_server) grpc_server->broadcast(*f);
-            try { decoders.decode(*f); } catch (const std::runtime_error&) {}
-            gui->update(*f);
-            if (model_engine) model_engine->on_frame(*f);   // updates signal_store too
-            else              signal_store.update(*f);
-            if (local_lc) local_lc->log_can_frame(*f);
-        });
-        socket->start();
     }
+
+    // Opens the sockets of all running channels. Only on the asio thread (socket_map is read there).
+    auto open_sockets = [&]() -> std::vector<std::string> {
+        std::vector<std::string> errors;
+        for (const auto& cfg : app.config.interfaces) {
+            std::unique_ptr<Socket> sock;
+            if (app.grpc_client.empty()) {
+                // A missing interface must not kill the GUI.
+                SocketCAN* can = nullptr;
+                try {
+                    can = new SocketCAN(io, cfg.name);
+                } catch (const std::exception& e) {
+                    std::println(stderr, "Warning: {}", e.what());
+                    errors.push_back(e.what());
+                    continue;
+                }
+                socket_map[cfg.name] = can;
+                sock.reset(can);
+            } else {
+                auto* gs = new SocketGrpc(io, cfg.name, app.grpc_client);
+                {
+                    std::lock_guard lock(grpc_map_mutex);
+                    grpc_socket_map[cfg.name] = gs;
+                }
+                sock.reset(gs);
+            }
+            auto& socket = sockets.emplace_back(std::move(sock));
+            socket->onFrame([gui, &decoders, local_lc, &model_engine, &grpc_server, &signal_store,
+                             live = cfg.live, to_log = cfg.log]
+                            (std::unique_ptr<DataFrame> frame) {
+                auto* f = dynamic_cast<CanFrame*>(frame.get());
+                if (!f) return;
+                if (grpc_server) grpc_server->broadcast(*f);
+                try { decoders.decode(*f); } catch (const std::runtime_error&) {}
+                if (live) gui->update(*f);
+                if (model_engine) model_engine->on_frame(*f);   // updates signal_store too
+                else              signal_store.update(*f);
+                if (local_lc && to_log) local_lc->log_can_frame(*f);
+            });
+            socket->start();
+        }
+        return errors;
+    };
+    auto close_sockets = [&]() -> std::vector<std::string> {
+        for (auto& s : sockets) s->stop();
+        socket_map.clear();
+        {
+            std::lock_guard lock(grpc_map_mutex);
+            grpc_socket_map.clear();
+        }
+        sockets.clear();
+        return {};
+    };
+    // Runs fn on the asio thread and waits for it.
+    auto on_io = [&io](auto fn) {
+        std::promise<std::vector<std::string>> done;
+        auto result = done.get_future();
+        boost::asio::post(io, [&] {
+            try { done.set_value(fn()); } catch (...) { done.set_exception(std::current_exception()); }
+        });
+        return result.get();
+    };
+
+    // "Start": set the interfaces up (one password prompt, only if something has to change), open the sockets.
+    auto start_channels = [&](bool graphical) -> Gui::ChannelResult {
+        if (app.grpc_client.empty()) {
+            std::vector<std::string> warnings;
+            const auto cmds = plan_setup(app.config, &warnings);
+            if (const auto err = run_privileged(cmds, graphical); !err.empty())
+                return {false, "Interface setup failed: " + err};
+            for (const auto& w : warnings) std::println(stderr, "Warning: {}", w);
+        }
+        auto errors = on_io(open_sockets);
+        if (app.config.interfaces.empty())
+            return {false, "No channels: connect devices to a Live or Log block in the Inputs window"};
+        const bool any = !sockets.empty();
+        if (errors.empty())
+            return {any, any ? "Channels started" : "No channel could be opened"};
+        std::string msg = "Problems with the configured channels:";
+        for (const auto& e : errors) msg += "\n  " + e;
+        return {any, msg};
+    };
+    gui->set_channel_control(start_channels, [&] { on_io(close_sockets); });
 
     if (!socket_errors.empty()) {
         std::string msg = "Problems with the configured channels:";
@@ -170,16 +235,13 @@ bool run_gui(AppConfig& app)
 
     // Show gRPC connection indicator when running as client.
     if (!app.grpc_client.empty()) {
-        std::vector<SocketGrpc*> grpc_sockets;
-        for (auto& s : sockets)
-            if (auto* gs = dynamic_cast<SocketGrpc*>(s.get()))
-                grpc_sockets.push_back(gs);
-        if (!grpc_sockets.empty()) {
-            gui->set_status_indicator(app.grpc_client, [grpc_sockets]() {
-                return std::any_of(grpc_sockets.begin(), grpc_sockets.end(),
-                                   [](SocketGrpc* s) { return s->connected(); });
-            });
-        }
+        // read from the render thread while the asio thread may change the map: ask the asio thread
+        gui->set_status_indicator(app.grpc_client, [&]() {
+            bool connected = false;
+            std::lock_guard lock(grpc_map_mutex);
+            for (auto& [name, gs] : grpc_socket_map) connected = connected || gs->connected();
+            return connected;
+        });
     }
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
@@ -191,6 +253,10 @@ bool run_gui(AppConfig& app)
     // or no interfaces at all).
     auto work_guard = boost::asio::make_work_guard(io);
     std::thread asio_thread([&io] { io.run(); });
+    if (app.log_mode && !app.config.interfaces.empty()) {   // --log: nothing to click, start right away
+        const auto res = gui->start_channels_now(false);
+        app_state.set_status(res.message, !res.running);
+    }
     gui->run();   // blocks until window closed, stop() or a restart request
     work_guard.reset();
     io.stop();

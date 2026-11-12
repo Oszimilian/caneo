@@ -18,6 +18,8 @@ find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(ZLIB REQUIRED)   # BLF containers; comes with grpc/protobuf
+find_package(elfio REQUIRED)     # XCP: ELF symbols
+find_package(libdwarf REQUIRED)  # XCP: DWARF types
 
 option(CANEO_STATIC_RUNTIME "Link libstdc++/libgcc statically (portable binaries)" OFF)
 
@@ -59,6 +61,10 @@ add_executable(caneo
     src/debug/CsvExport.cpp
     ${CANEO_FONTS_CPP}
     src/config/Config.cpp
+    src/config/Pipeline.cpp
+    src/config/RecentConfigs.cpp
+    src/setup/CanDevices.cpp
+    src/gui/PipelineWindow.cpp
     src/config/AppConfig.cpp
     src/setup/InterfaceSetup.cpp
     src/send/SendModel.cpp
@@ -85,8 +91,14 @@ add_executable(caneo
     src/model/ModelEngine.cpp
     src/modes/run_playback.cpp
     src/modes/run_tui.cpp
+    src/modes/config_picker.cpp
     src/modes/run_live.cpp
     src/modes/run_gui.cpp
+    src/xcp/A2lReader.cpp
+    src/xcp/ElfReader.cpp
+    src/xcp/XcpCanTransport.cpp
+    src/xcp/XcpMaster.cpp
+    src/gui/XcpView.cpp
 )
 
 # gRPC / protobuf codegen for can_stream.proto
@@ -136,6 +148,8 @@ target_link_libraries(caneo PRIVATE
     imnodes
     gRPC::grpc++
     ZLIB::ZLIB
+    elfio::elfio
+    libdwarf::libdwarf
 )
 
 if(CANEO_STATIC_RUNTIME)
@@ -146,11 +160,22 @@ endif()
 option(CANEO_BUILD_TESTS "Build caneo_config_test" ON)
 if(CANEO_BUILD_TESTS)
     enable_testing()
-    add_executable(caneo_config_test tests/config_roundtrip.cpp src/config/Config.cpp)
+    add_executable(caneo_config_test tests/config_roundtrip.cpp src/config/Config.cpp src/config/Pipeline.cpp)
     target_include_directories(caneo_config_test PRIVATE src)
     target_link_libraries(caneo_config_test PRIVATE yaml-cpp::yaml-cpp)
     add_test(NAME config_roundtrip
              COMMAND caneo_config_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/full.yaml
                                        ${CMAKE_CURRENT_BINARY_DIR}/roundtrip.yaml
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
+
+    add_test(NAME config_roundtrip_xcp
+             COMMAND caneo_config_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/xcp.yaml
+                                       ${CMAKE_CURRENT_BINARY_DIR}/roundtrip_xcp.yaml
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
+
+    # XCP: ELF reader self-check + a command line master for manual tests against a slave (scripts/xcp_sim.py)
+    add_executable(caneo_xcp_test tests/xcp_test.cpp src/xcp/A2lReader.cpp src/xcp/ElfReader.cpp src/xcp/XcpCanTransport.cpp src/xcp/XcpMaster.cpp)
+    target_include_directories(caneo_xcp_test PRIVATE src)
+    target_link_libraries(caneo_xcp_test PRIVATE elfio::elfio libdwarf::libdwarf)
+    add_test(NAME xcp_codec COMMAND caneo_xcp_test --selftest)
 endif()

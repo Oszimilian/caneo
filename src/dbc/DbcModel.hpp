@@ -17,6 +17,7 @@ struct DbcSignal {
     int         bit_size  = 8;
     bool        little_endian = true;   // Intel (@1)
     bool        is_signed     = false;
+    int         float_type    = 0;      // SIG_VALTYPE_: 0 integer, 1 IEEE float (32 bit), 2 IEEE double (64 bit)
     double      factor = 1.0, offset = 0.0, min = 0.0, max = 0.0;
     std::string unit;
     std::vector<std::string> receivers;     // node names

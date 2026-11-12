@@ -18,7 +18,10 @@ public:
     void stop() override;
 
     const std::string& interface() const;
-    void send(uint64_t id, const std::vector<uint8_t>& data);
+    // Frames with more than 8 bytes (or fd = true) go out as CAN FD frames (with BRS); the length is padded to
+    // the next valid CAN FD length.
+    void send(uint64_t id, const std::vector<uint8_t>& data, bool fd = false);
+    bool fd_enabled() const { return fd_enabled_; }
 
     friend std::ostream& operator<<(std::ostream& os, const SocketCAN& socket);
 
@@ -31,6 +34,7 @@ private:
     boost::asio::io_context& io_;
     boost::asio::posix::stream_descriptor descriptor_;
     std::string interface_;
+    bool fd_enabled_ = false;   // CAN_RAW_FD_FRAMES accepted
 };
 
 template <>

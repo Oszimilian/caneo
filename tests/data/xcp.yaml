@@ -1,0 +1,21 @@
+# CAN FD channel with an XCP master (Settings > Channels: device -> Baudrate (FD) -> XCP)
+pipeline:
+  nodes:
+    - {id: 1, type: hw_socketcan, x: 0, y: 0, channels: [can0]}
+    - {id: 2, type: baudrate, x: 300, y: 0, baudrate: 500000, virtual: false, fd: true, data_baudrate: 2000000}
+    - {id: 3, type: xcp, name: Inverter, x: 600, y: 0, tx_id: 0x7F0, rx_id: 0x7F1, addr_ext: 0, timeout_ms: 50, pad: true}
+    - {id: 4, type: live, x: 600, y: 150}
+  links:
+    - [1, 0, 2, 0]
+    - [2, 0, 3, 0]
+    - [2, 0, 4, 0]
+xcp:
+  target: Inverter
+  elf: build/firmware.elf
+  a2l: build/firmware.a2l
+  poll_ms: 20
+  measure:
+    - {name: ctrl.pid.kp}
+    - {name: sine, event: 0}
+  plots:
+    - [sine, ctrl.pid.kp]

@@ -755,7 +755,7 @@ void DbcEditor::render_signal_table(DbcMessage& m)
             ImGui::TableNextColumn(); ImGui::Text("%d", s.start_bit);
             ImGui::TableNextColumn(); ImGui::Text("%d", s.bit_size);
             ImGui::TableNextColumn(); ImGui::TextUnformatted(s.little_endian ? "Intel" : "Motorola");
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(s.is_signed ? "signed" : "unsigned");
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(s.float_type == 1 ? "float" : s.float_type == 2 ? "double" : s.is_signed ? "signed" : "unsigned");
             ImGui::TableNextColumn(); ImGui::Text("%g", s.factor);
             ImGui::TableNextColumn(); ImGui::Text("%g", s.offset);
             ImGui::TableNextColumn(); ImGui::TextUnformatted(s.unit.c_str());
@@ -796,10 +796,13 @@ void DbcEditor::render_signal(DbcMessage& m, DbcSignal& s)
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(em * 8.0f);
-    int sign = s.is_signed ? 1 : 0;
-    if (ImGui::Combo("Type", &sign, "unsigned\0signed\0")) {
-        s.is_signed = sign == 1;
-        dirty_      = true;
+    int sign = s.float_type == 1 ? 2 : s.float_type == 2 ? 3 : s.is_signed ? 1 : 0;
+    if (ImGui::Combo("Type", &sign, "unsigned\0signed\0float (32 bit)\0double (64 bit)\0")) {
+        s.float_type = sign == 2 ? 1 : sign == 3 ? 2 : 0;
+        s.is_signed  = sign == 1 || sign >= 2;   // floats are written as signed
+        if (sign == 2) s.bit_size = 32;
+        if (sign == 3) s.bit_size = 64;
+        dirty_ = true;
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(em * 7.0f);
@@ -820,8 +823,8 @@ void DbcEditor::render_signal(DbcMessage& m, DbcSignal& s)
     dirty_ |= ImGui::InputDouble("Max", &s.max, 0, 0, "%.9g");
     ImGui::SameLine();
     if (ImGui::Button("Auto range")) {
-        const double raw_lo = s.is_signed ? -std::pow(2.0, s.bit_size - 1) : 0.0;
-        const double raw_hi = s.is_signed ? std::pow(2.0, s.bit_size - 1) - 1 : std::pow(2.0, s.bit_size) - 1;
+        const double raw_lo = s.float_type == 1 ? -3.4028234663852886e38 : s.float_type == 2 ? -1.7976931348623157e308 : s.is_signed ? -std::pow(2.0, s.bit_size - 1) : 0.0;
+        const double raw_hi = s.float_type == 1 ? 3.4028234663852886e38 : s.float_type == 2 ? 1.7976931348623157e308 : s.is_signed ? std::pow(2.0, s.bit_size - 1) - 1 : std::pow(2.0, s.bit_size) - 1;
         s.min = std::min(raw_lo * s.factor + s.offset, raw_hi * s.factor + s.offset);
         s.max = std::max(raw_lo * s.factor + s.offset, raw_hi * s.factor + s.offset);
         dirty_ = true;

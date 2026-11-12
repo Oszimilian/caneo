@@ -1,11 +1,15 @@
 #include "InterfaceSetup.hpp"
 #include "compat/print.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <net/if.h>
 #include <stdexcept>
+#include <unistd.h>
 
 static bool interface_exists(const std::string& name) {
     return if_nametoindex(name.c_str()) != 0;
@@ -19,34 +23,97 @@ static bool interface_is_up(const std::string& name) {
     return false;
 }
 
-static void run(const std::string& cmd) {
+// CAN FD interfaces (and vcan devices that carry FD frames) have an MTU of 72 (CANFD_MTU), classic ones 16.
+static bool interface_is_fd(const std::string& name) {
+    std::ifstream f("/sys/class/net/" + name + "/mtu");
+    int mtu = 0;
+    return (f >> mtu) && mtu == 72;
+}
+
+static bool safe_name(const std::string& n) {
+    return !n.empty() && n.size() < IFNAMSIZ &&
+           std::ranges::all_of(n, [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-' || c == '.'; });
+}
+
+std::vector<std::string> plan_setup(const Config& cfg, std::vector<std::string>* warnings) {
+    std::vector<std::string> cmds;
+    const auto is_virtual = [&](const InterfaceConfig& i) { return cfg.virtual_can || i.virtual_can; };
+    const auto warn = [&](std::string w) { if (warnings) warnings->push_back(std::move(w)); };
+
+    bool need_vcan_module = false;
+    std::vector<std::string> per_iface;
+    for (const auto& iface : cfg.interfaces) {
+        if (!safe_name(iface.name)) {
+            warn(std::format("invalid interface name '{}'", iface.name));
+            continue;
+        }
+        if (is_virtual(iface)) {
+            need_vcan_module = true;
+            const bool exists = interface_exists(iface.name);
+            if (!exists)
+                per_iface.push_back(std::format("ip link add dev {} type vcan", iface.name));
+            const bool mtu_wrong = iface.fd && (!exists || !interface_is_fd(iface.name));
+            if (mtu_wrong) {
+                if (exists && interface_is_up(iface.name))
+                    per_iface.push_back(std::format("ip link set down {}", iface.name));
+                per_iface.push_back(std::format("ip link set {} mtu 72", iface.name));
+            }
+            if (!exists || mtu_wrong || !interface_is_up(iface.name))
+                per_iface.push_back(std::format("ip link set up {}", iface.name));
+            continue;
+        }
+        if (!interface_exists(iface.name)) {
+            warn(std::format("interface {} not found", iface.name));
+            continue;
+        }
+        // An interface that is up is left alone, unless it should run CAN FD and does not (or the other way round).
+        const bool up = interface_is_up(iface.name);
+        if (up && interface_is_fd(iface.name) == iface.fd)
+            continue;
+        if (up) {
+            if (iface.baudrate == 0) {
+                warn(std::format("{} is up {} CAN FD; set a baudrate to reconfigure it", iface.name,
+                                 iface.fd ? "without" : "with"));
+                continue;
+            }
+            per_iface.push_back(std::format("ip link set down {}", iface.name));
+        }
+        if (iface.baudrate > 0 && iface.fd)
+            per_iface.push_back(std::format("ip link set {} type can bitrate {} dbitrate {} fd on", iface.name,
+                                            iface.baudrate, iface.data_baudrate > 0 ? iface.data_baudrate : 2'000'000));
+        else if (iface.baudrate > 0)
+            per_iface.push_back(std::format("ip link set {} type can bitrate {} fd off", iface.name, iface.baudrate));
+        per_iface.push_back(std::format("ip link set up {}", iface.name));
+    }
+    if (need_vcan_module && !per_iface.empty())
+        cmds.push_back("modprobe vcan");
+    cmds.insert(cmds.end(), per_iface.begin(), per_iface.end());
+    return cmds;
+}
+
+std::string run_privileged(const std::vector<std::string>& commands, bool graphical) {
+    if (commands.empty()) return {};
+
+    std::string script;
+    for (const auto& c : commands) script += (script.empty() ? "" : " && ") + c;
+
+    std::string prefix;
+    if (geteuid() != 0) {
+        const bool has_pkexec = std::system("command -v pkexec >/dev/null 2>&1") == 0;
+        prefix = graphical && has_pkexec ? "pkexec " : "sudo ";
+    }
+    const std::string cmd = std::format("{}sh -c '{}'", prefix, script);
     std::println("  $ {}", cmd);
     if (std::system(cmd.c_str()) != 0)
-        throw std::runtime_error(std::format("Command failed: {}", cmd));
+        return std::format("Command failed: {}", script);
+    return {};
 }
 
 void setup_interfaces(const Config& cfg) {
-    if (cfg.virtual_can) {
-        run("sudo modprobe vcan");
-        for (const auto& iface : cfg.interfaces) {
-            if (!interface_exists(iface.name))
-                run(std::format("sudo ip link add dev {} type vcan", iface.name));
-            if (!interface_is_up(iface.name))
-                run(std::format("sudo ip link set up {}", iface.name));
-        }
-    } else {
-        for (const auto& iface : cfg.interfaces) {
-            if (!interface_exists(iface.name)) {
-                std::println(stderr, "Warning: interface {} not found, skipping.", iface.name);
-                continue;
-            }
-            if (interface_is_up(iface.name)) {
-                std::println("  {} is already up, skipping.", iface.name);
-                continue;
-            }
-            if (iface.baudrate > 0)
-                run(std::format("sudo ip link set {} type can bitrate {}", iface.name, iface.baudrate));
-            run(std::format("sudo ip link set up {}", iface.name));
-        }
-    }
+    std::vector<std::string> warnings;
+    const auto cmds = plan_setup(cfg, &warnings);
+    for (const auto& w : warnings)
+        std::println(stderr, "Warning: {}, skipping.", w);
+    if (const auto err = run_privileged(cmds, false); !err.empty())
+        throw std::runtime_error(err);
 }

@@ -7,6 +7,7 @@
 #include <vector>
 
 DEFINE_bool(tui,      false, "Enable TUI mode");
+DEFINE_bool(headless, false, "No UI: print frames / log to the terminal");
 DEFINE_bool(gui,      false, "Enable GUI mode (Dear ImGui)");
 DEFINE_bool(log,      false, "Enable logging to MCAP file");
 DEFINE_bool(debug,    false, "Enable debug output");
@@ -19,12 +20,13 @@ DEFINE_string(playback, "", "Path to MCAP file for playback");
 
 AppConfig AppConfig::parse(int& argc, char* argv[]) {
     gflags::SetUsageMessage(
-        "caneo [--tui] [--log] [--config FILE] [--model FILE] [--playback FILE] [iface[:dbc] ...]");
+        "caneo [--tui | --gui | --headless] [--log] [--config FILE] [--model FILE] [--playback FILE] [iface[:dbc] ...]");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     AppConfig app;
     app.tui_mode      = FLAGS_tui;
     app.gui_mode      = FLAGS_gui;
+    app.headless_mode = FLAGS_headless;
     app.log_mode      = FLAGS_log;
     app.debug_mode    = FLAGS_debug;
     app.grpc_server   = FLAGS_grpc_server;
@@ -39,9 +41,12 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
     if (!FLAGS_config.empty()) {
         app.config_path = FLAGS_config;
         app.config      = load_config(FLAGS_config);
+        app.config_found = true;
     } else if (iface_args.empty()) {
-        if (auto cfg = try_load_default_config())
+        if (auto cfg = try_load_default_config()) {
             app.config = std::move(*cfg);
+            app.config_found = true;
+        }
     } else {
         for (const auto& arg : iface_args) {
             const auto sep = arg.find(':');
@@ -51,7 +56,12 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
                 iface.dbc = arg.substr(sep + 1);
             app.config.interfaces.push_back(std::move(iface));
         }
+        app.config_found = true;
     }
+
+    // Without a mode flag the GUI starts (--tui for the terminal UI).
+    if (!app.gui_mode && !app.tui_mode && !app.headless_mode && app.playback_path.empty())
+        app.gui_mode = true;
 
     return app;
 }
@@ -76,6 +86,7 @@ std::vector<std::string> AppConfig::restart_args() const {
     std::vector<std::string> args{"caneo"};
     if (tui_mode)            args.emplace_back("--tui");
     if (gui_mode)            args.emplace_back("--gui");
+    if (headless_mode)       args.emplace_back("--headless");
     if (log_mode)            args.emplace_back("--log");
     if (debug_mode)          args.emplace_back("--debug");
     if (grpc_server)         args.emplace_back("--grpc_server");

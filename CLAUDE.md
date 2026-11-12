@@ -9,7 +9,8 @@ A CAN bus visualization and send tool written in C++23.
 - CMake + Conan 2; details in `docs/building.md`
 - Dependencies via Conan 2 (no system-installed libs), except **Dear ImGui (docking branch) + ImPlot**,
   which `cmake/ImGui.cmake` fetches with FetchContent (conan's imgui has no docking)
-- Key dependencies: `boost::asio`, `dbcppp`, `ftxui`, `yaml-cpp`, `sol2`/Lua, gRPC, mcap, imgui/implot/glfw
+- Key dependencies: `boost::asio`, `dbcppp`, `ftxui`, `yaml-cpp`, `sol2`/Lua, gRPC, mcap, imgui/implot/glfw,
+  `elfio` + `libdwarf` (XCP: ELF symbols / DWARF types)
 - dbcppp does not build with GCC >= 14 -> build in Docker (Ubuntu 24.04, GCC 13)
 
 ## Build commands
@@ -36,11 +37,69 @@ A CAN bus visualization and send tool written in C++23.
   `actions: <file>` are still read and merged in
 - `AppConfig` — CLI flags + `config_path`; `restart_args()` for the GUI's re-exec
 
+## Input pipeline (`src/config/Pipeline.*`, `src/gui/PipelineWindow.*`) — graphical channel setup
+- Config `pipeline:` (nodes + links, `PipelineSpec`) is the source of truth; `Config::interfaces` (flat list used by sockets,
+  decoders, TUI) is **derived** from it (`derive_interfaces()`, called after loading via `sync_pipeline()` and after edits).
+  Old files with only `interfaces:` get a graph generated (`pipeline_from_interfaces()`); `interfaces:` is still written for compatibility
+- Blocks: `hw_socketcan` (USB/PCI adapter from `detect_can_devices()` in `src/setup/CanDevices.*`, one output port per channel),
+  `virtual_socketcan` (vcan names), `baudrate` (bit/s or `virtual`, `fd` + `data_baudrate` = CAN FD), `decode` (DBC), `live` (trace/graphs),
+  `log` (format mcap|blf), `xcp` (XCP master: name, `tx_id`/`rx_id`, `addr_ext`, `timeout_ms`, `pad`; input only)
+- `xcp` blocks are derived into `Config::xcp_targets` (`XcpTargetConfig`, fd from the channel); XCP parameter changes need no restart
+- Per interface derived: `baudrate`, `virtual_can`, `dbc`, `live` (reaches a Live block), `log` (reaches a Log block); channels that
+  are connected to nothing are dropped. `logging.format` follows the fed Log blocks (mcap / blf / both). `run_gui` only forwards frames
+  to the GUI / log when the flag is set; `setup_interfaces()` creates vcan per interface (`virtual_can`)
+- GUI: Settings tab "Channels" (`PipelineWindow::render_contents`, imnodes, own context + editor); channel changes need a restart (banner with Save & Restart)
+
+## Start-up modes (`src/main.cpp`, `AppConfig`)
+- No flag = GUI; `--tui` = terminal UI; `--headless` = the former no-UI default (print/log). Without a config file (no `caneo.yaml`, no
+  `--config`, no interface args) the GUI opens the modal "Select configuration" (`Gui::render_welcome`): recent configs
+  (`src/config/RecentConfigs.*`, `~/.config/caneo/recent_configs`, fed by every load/save), Browse..., or "Blank config"; picking one restarts with it.
+  The TUI shows a directory/file picker instead (`src/modes/config_picker.*`)
+- GUI: nothing is set up or opened at start. Menu bar "Start" runs `plan_setup()` + `run_privileged()` (ONE pkexec/sudo call, none if
+  nothing has to change) on a worker thread and then opens the sockets on the asio thread; "Stop" closes them (`run_gui.cpp`, `Gui::render_channel_button`).
+  `--log` starts the channels immediately. TUI / headless still call `setup_interfaces()` at start
+- GUI modes: Live / Debug / DBC / XCP / Settings (`Gui::Mode`); Settings fills the work area (`SettingsWindow::render_full`)
+
 ## Interface setup (`src/setup/`)
-- `setup_interfaces(Config)` — called at startup before sockets open
+- `plan_setup(Config)` -> privileged commands; `run_privileged()`; `setup_interfaces(Config)` = both for the CLI modes
 - `virtual: true`: loads `vcan` kernel module, creates missing vcan interfaces, brings them up
 - `virtual: false`: sets CAN bitrate and brings up real interfaces (skips if already up)
 - Uses `if_nametoindex()` + `/sys/class/net/<name>/operstate` for existence/state checks
+
+## CAN FD
+- `InterfaceConfig::fd` / `data_baudrate`; `plan_setup()`: `ip link set X type can bitrate B dbitrate D fd on` (reconfigures an
+  interface that is up with the wrong FD mode, detected by MTU 72 in `/sys/class/net/X/mtu`), vcan: `mtu 72`
+- `SocketCAN` enables `CAN_RAW_FD_FRAMES`, reads `canfd_frame` (CAN_MTU / CANFD_MTU), `CanHeader::fd` / `brs`;
+  `send()` sends an FD frame (BRS, padded to a valid length) for > 8 bytes or `fd = true`
+
+## XCP (`src/xcp/`, `src/gui/XcpView.*`) — measure / calibrate an ECU (XCPlite etc.) over XCP on CAN (FD)
+- `load_elf()` (`ElfReader`): ELFIO symbol table + libdwarf DIE walk -> `ElfImage` tree of `ElfVariable` (structs, unions,
+  arrays (max 256 elements per dim shown), bitfields (`bit_offset` from the LSB of the storage unit), enums, function statics
+  `func.var`, namespaces `ns::`); `by_path` = leaves. Without DWARF: object symbols, type guessed from the size. Move-only
+- `load_a2l()` / `a2l_image()` (`A2lReader`): own A2L tokenizer + block parser; MEASUREMENT / CHARACTERISTIC (VALUE, VAL_BLK,
+  ASCII, CURVE/MAP without axis points in the record layout), COMPU_METHOD (IDENTICAL, LINEAR, RAT_FUNC without p^2 ->
+  `XcpConversion` phys = (p + q raw) / (s + t raw); TAB_VERB -> enumerators), COMPU_VTAB(_RANGE), RECORD_LAYOUT, UNIT, BIT_MASK,
+  MATRIX_DIM, SYMBOL_LINK. `a2l_image()` builds an `ElfImage` (`from_a2l`, leaf path = A2L name, `description` = LONG_IDENTIFIER,
+  tree split by `/` of the LONG_IDENTIFIER, else by `.` of the name); addresses from the ELF when loaded (name / SYMBOL_LINK, a
+  stale ECU_ADDRESS is reported), else ECU_ADDRESS. `xcp_decode` / `xcp_encode` apply `XcpVar::conv`
+- Simulink (MABY REALTIME): `CORE/model/model_build.m` builds with DefaultParameterBehavior=Tunable + OptimizeBlockIOStorage=off
+  (not saved to the .slx) and writes `_BUILD/model_ert_rtw/model.a2l` (`coder.asap2.export`, LONG_IDENTIFIER = block path from the
+  code descriptor, ECU addresses via MapFile from `_BUILD/linux/model` if it exists)
+- `XcpCanTransport`: own raw socket per master (filter on the slave ID, FD frames, MTU check), blocking with poll()
+- `XcpMaster`: worker thread (`std::jthread`), requests queued (connect, disconnect, set_measurements, write, read).
+  CONNECT (byte order, MAX_CTO/DTO), GET_ID, GET_DAQ_PROCESSOR/RESOLUTION/EVENT_INFO. Polling = SHORT_UPLOAD every poll_ms;
+  DAQ = one dynamic list per event (FREE/ALLOC_DAQ/ODT/ODT_ENTRY, WRITE_DAQ, SET_DAQ_LIST_MODE, START_STOP), first-fit ODT packing,
+  all 4 identification field types, timestamps unwrapped (lists whose first ODT cannot hold anything next to the timestamp run
+  without). Write = SET_MTA + DOWNLOAD (bitfields read-modify-write), then read back. Timeout -> SYNCH + retry.
+  `SampleFn(name, t since connect, value)` runs on the worker; `xcp_decode` / `xcp_encode` convert values
+- `XcpView` (`Gui::Mode::Xcp`): toolbar (target, connect, ELF + A2L load/reload async, poll ms; `vars()` = A2L image if loaded, else ELF), centre = stacked ImPlot plots (linked X,
+  toolbar like `GraphWindow`: Live/Paused, window presets + wheel, Auto Y per plot (Y-axis zoom = manual), Fit, Default / double-click, cursor read-out;
+  live window, drag & drop `CANEO_XCP_VAR`), right = measured table (value, poll / DAQ event) + clipped variable tree / filter
+  (right-click: edit, read, plot, measure poll / every cycle (DAQ)), modal "Edit value" (enum combo, bool checkbox, hex)
+- Config `xcp:` (`XcpConfig`: target, elf, a2l, poll_ms, measure [{name, event}], plots) via `AppState::set_xcp_snapshot()`;
+  samples are logged as `xcp/<var>` through `AppState::log_scalar()`. `Gui::run` calls `XcpView::shutdown()` before returning
+- Testing without hardware: `scripts/xcp_sim.py` (XCP slave on vcan, DAQ + timestamps, `--fd`, `--id-field`) and
+  `build/caneo_xcp_test` (selftest incl. A2L parsing / ELF or A2L listing (`--a2l f [--elf f]`) / CLI master), test ELF from `tests/data/xcp_target.c`
 
 ## Socket hierarchy (`src/socket/`)
 - `Socket` — base class for any incoming data source
@@ -95,9 +154,11 @@ A CAN bus visualization and send tool written in C++23.
 ## Flows (`src/flow/`) — block diagrams (config `flows:`), GUI only
 - GUI: `FlowsWindow` ("Flows", left dock) lists the live flows (run/stop, status, duplicate/delete); a click opens the
   flow in `FlowEditorWindow`. Debug view shows its own offline flows as tabs
-- Extra blocks: `add`, `diff`, `compare`, `movavg`, `fft` (`math_block_step()`, shared by live + offline), `csv` (offline: N inputs -> table, "Export" writes `path`)
+- Control blocks (live): `slider` (value goes into the running flow at once via `FlowEngine::set_control`, no Apply; value is saved), `button`
+  (1 for one step, not sent to CAN), `rs` (RS flip-flop S/R -> Q, !Q, `op` R|S = dominant), `switch` (a, b, ctrl -> ctrl>0.5 ? b : a). Offline: slider = const, button = 0
+- Extra blocks: `add`, `mul` (a * b), `sin` / `cos` (radians, or `degrees`), `gain` (in * gain), `integrator` ("1/s", forward Euler, start value = `offset`), `diff`, `compare`, `movavg`, `fft` (`math_block_step()`, shared by live + offline), `csv` (offline: N inputs -> table, "Export" writes `path`)
 - `can_out`: `sig_values` = constants for unconnected inputs, `period_ms` 0 = send once on start, "Send now" (`FlowEngine::trigger`)
-- `lua`: output names in `signals` (step returns a table by name/position), `send()`/`send_raw()` (live), optional `init()`
+- `lua`: input names in `inputs` (several -> `step(in1, in2, ..., t)`; menu "Lua: Position" = vx, vy, yaw rate -> X, Y, psi), output names in `signals` (step returns a table by name/position), `send()`/`send_raw()` (live), optional `init()`
 - Scope names with `/` form sub-folders in the Debug signal tree
 - `FlowSpec` (nodes + links, `[from_node, from_port, to_node, to_port]`), node types: `can_in` (one output port per
   selected signal), `can_out` (one input port per signal, sends the message every `period_ms`), `lua` (1 in / 1 out,
@@ -106,6 +167,8 @@ A CAN bus visualization and send tool written in C++23.
 - `Flow` — steady_timer every `step_ms`, blocks evaluated in dependency order; loops read the previous step;
   unconnected `can_out` inputs keep the DBC default. `FlowEngine` — like `GuardEngine` (posts to io, snapshot for the GUI);
   flows are built on the GUI thread (`ActionFactory::model_for` is not thread-safe)
+- Navigation of every imnodes editor (`src/gui/ImNodesPan.hpp`, `ImNodesZoom`): wheel = zoom (emulated: window font scale + scaled ImGui/imnodes style + node
+  positions; stored positions stay unscaled), right-drag / middle / Alt+left-drag = pan, Shift+wheel sideways, toolbar -/+/100%
 - `FlowEditorWindow` — imnodes (fetched in `cmake/ImGui.cmake`), edits a working copy, "Apply" (re)starts the flow;
   right-click on the canvas adds blocks, Delete removes the selection, live values are shown at the ports
 
@@ -174,6 +237,7 @@ A CAN bus visualization and send tool written in C++23.
   `run_offline_flow()` steps a FlowSpec on a `step_ms` grid over the loaded log (can_in = sample-and-hold of the log signals,
   lua/generator as live, can_out ignored); each scope becomes series `flow/<flow>/<scope>`, appended after the log's own series
   (`LogDocument::set_extra_series()`, `Data::base_series`). Flows re-run on every change and after (re)loading a log
+- XY plot: tab button "New XY plot" -> tab with ONE ImPlot (`PlotTab::xy`, `render_xy`): exactly two dropped signals, first = X, second = Y (linearly resampled onto the X sample times); stored as `xy: true` in the history tab
 - Plot close: small "x" in the corner of each plot when a tab has more than one
 
 ## DBC mode (`src/gui/DbcEditor.*`, `src/dbc/DbcModel.*`)

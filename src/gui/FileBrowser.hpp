@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,8 +18,14 @@ public:
 
     // extensions: e.g. {".dbc"}; empty = all files. `start` may be a file
     // (its directory is opened and its name preselected) or a directory.
+    // content (optional): files with another extension are shown too if it returns true (e.g. ELF magic);
+    // content_label describes it in the filter line ("ELF executables").
     void open(std::string title, Mode mode, std::vector<std::string> extensions,
-              const std::filesystem::path& start = {});
+              const std::filesystem::path& start = {},
+              std::function<bool(const std::filesystem::path&)> content = {}, std::string content_label = {});
+
+    // True if the file starts with the ELF magic (0x7F 'E' 'L' 'F').
+    static bool is_elf(const std::filesystem::path& p);
 
     // Returns the chosen path once, on confirmation.
     std::optional<std::filesystem::path> render();
@@ -37,6 +44,8 @@ private:
     std::string                title_;
     Mode                       mode_ = Mode::Open;
     std::vector<std::string>   extensions_;
+    std::function<bool(const std::filesystem::path&)> content_;
+    std::string                content_label_;
     std::filesystem::path      dir_;
     std::vector<Entry>         entries_;
     std::string                file_name_;

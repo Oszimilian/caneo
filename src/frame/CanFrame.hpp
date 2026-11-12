@@ -12,7 +12,9 @@
 struct CanHeader {
     uint32_t id;
     std::string interface;
-    uint8_t dlc;
+    uint8_t dlc;          // payload length in bytes (0..8, CAN FD up to 64)
+    bool    fd  = false;  // CAN FD frame
+    bool    brs = false;  // CAN FD bit rate switch
 };
 
 class CanFrame : public DataFrame {

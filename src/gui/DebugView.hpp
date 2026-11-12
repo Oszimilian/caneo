@@ -59,6 +59,24 @@ public:
         std::size_t       active_plot = 0;
         bool              fit_requested = true;
         std::vector<float> row_ratios;   // subplot heights, reset by "Default"
+        bool              xy = false;           // XY plot: plots[0].series = {x, y}
+        bool              xy_equal = true;      // equal axis scale
+        // XY points: y resampled (linear) onto the sample times of x; rebuilt when the key changes
+        std::vector<double> xy_x, xy_y;
+        std::vector<std::size_t> xy_key;
+
+        // View history (zoom / pan) for "Undo": one entry per burst of changes.
+        struct View {
+            double x0 = 0.0, x1 = 0.0;
+            std::vector<std::pair<double, double>> y;
+            bool has_y = false;   // false while Auto-Y drives the Y axes
+        };
+        std::vector<View> undo;
+        View              last;                 // view of the previous frame
+        View              burst_start;          // view before the running burst of changes
+        bool              last_valid = false, in_burst = false;
+        double            last_change = 0.0;
+        int               skip_frames = 0;      // after an undo: adopt the view without recording
     };
 private:
 
@@ -74,12 +92,16 @@ private:
     void new_flow();
     void delete_flow(std::size_t idx);
     void render_plots(PlotTab& tab);
+    void render_xy(PlotTab& tab);
     void render_plot_tabs();
     void render_dbc_viewer();
     void render_unmatched();
     void render_spectrum();
     void view_dbc(const std::string& path);
     void render_plot_toolbar();
+    void record_view(PlotTab& tab, const PlotTab::View& now);
+    void undo_view(PlotTab& tab);
+    void default_view(PlotTab& tab);
     void render_dialogs();
     void add_signal(std::size_t plot, std::size_t series_idx);
     void load(const std::string& path);
@@ -156,6 +178,7 @@ private:
     std::vector<std::vector<CsvTable>>          flow_csv_;      // csv blocks' tables per flow
     std::vector<std::shared_ptr<FlowState>>     flow_states_;   // log / error per flow, same order as the specs
     unsigned                                    data_version_ = 0;
+    std::size_t                                 xy_epoch_ = 0;   // bumped when series values may have changed
     float                                       flows_frac_ = 0.3f;   // height share of the flow list in the sidebar
 
     std::optional<DebugSession> restore_;   // plots to rebuild once the log is loaded

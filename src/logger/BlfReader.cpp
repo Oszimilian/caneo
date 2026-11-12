@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "BlfReader.hpp"
 
 #include "BlfFormat.hpp"
@@ -57,10 +58,11 @@ std::string BlfReader::channel_name(uint16_t channel) const
         return it->second;
     if (channel >= 1 && channel <= fallback_names_.size())
         return fallback_names_[channel - 1];
-    return std::format("can{}", channel > 0 ? channel - 1 : 0);
+    return std::format("can{}", channel);
 }
 
-void BlfReader::read(const std::function<bool(const RawFrame&)>& fn) const
+void BlfReader::read(const std::function<bool(const RawFrame&)>& fn,
+                     const std::function<void(double)>& on_progress) const
 {
     std::ifstream f(path_, std::ios::binary);
     if (!f)
@@ -72,6 +74,7 @@ void BlfReader::read(const std::function<bool(const RawFrame&)>& fn) const
     const uint32_t header_size = get_le<uint32_t>(header + 4);
     const uint64_t start_ns    = systemtime_to_ns(header + 40);
     f.seekg(header_size, std::ios::beg);
+    const double file_size = static_cast<double>(std::max<std::uintmax_t>(std::filesystem::file_size(path_), 1));
 
     // Decompressed object stream; objects may continue in the next container.
     std::vector<uint8_t> stream;
@@ -188,6 +191,8 @@ void BlfReader::read(const std::function<bool(const RawFrame&)>& fn) const
         if (!f.read(reinterpret_cast<char*>(obj.data()), static_cast<std::streamsize>(obj.size())))
             break;
         f.ignore(obj_size % 4);
+        if (on_progress)
+            on_progress(std::min(1.0, static_cast<double>(f.tellg()) / file_size));
 
         // drop consumed bytes before appending
         if (pos > 0) {

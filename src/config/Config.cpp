@@ -1,4 +1,5 @@
 #include "Config.hpp"
+#include "Pipeline.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -29,10 +30,12 @@ bool Config::same_channels(const Config& other) const {
     for (std::size_t i = 0; i < interfaces.size(); ++i) {
         const auto& a = interfaces[i];
         const auto& b = other.interfaces[i];
-        if (a.name != b.name || a.dbc != b.dbc || a.baudrate != b.baudrate)
+        if (a.name != b.name || a.dbc != b.dbc || a.baudrate != b.baudrate || a.fd != b.fd ||
+            a.data_baudrate != b.data_baudrate ||
+            a.virtual_can != b.virtual_can || a.live != b.live || a.log != b.log)
             return false;
     }
-    return true;
+    return logging.format == other.logging.format;
 }
 
 // ── parsing ─────────────────────────────────────────────────────────────────
@@ -145,6 +148,7 @@ static std::vector<DebugSession> parse_debug_history(const YAML::Node& list) {
             for (const auto& t : n["tabs"]) {
                 DebugTabConfig tab;
                 tab.name = get_or<std::string>(t, "name", "Plot");
+                tab.xy   = get_or<bool>(t, "xy", false);
                 if (t["plots"] && t["plots"].IsSequence())
                     for (const auto& p : t["plots"])
                         tab.plots.push_back(p.as<std::vector<std::string>>());
@@ -189,6 +193,13 @@ static std::vector<FlowSpec> parse_flows(const YAML::Node& list) {
                 s.op         = get_or<std::string>(nn, "op", "<");
                 s.window     = get_or<int>(nn, "window", 16);
                 s.derivative = get_or<bool>(nn, "derivative", true);
+                s.gain       = get_or<double>(nn, "gain", 1.0);
+                if (const auto& ins = nn["inputs"]; ins && ins.IsSequence())
+                    for (const auto& in : ins) s.inputs.push_back(in.as<std::string>());
+                s.degrees    = get_or<bool>(nn, "degrees", false);
+                s.min        = get_or<double>(nn, "min", 0.0);
+                s.max        = get_or<double>(nn, "max", 100.0);
+                s.value      = get_or<double>(nn, "value", 0.0);
                 if (const auto& sigs = nn["signals"]; sigs && sigs.IsSequence())
                     for (const auto& sg : sigs)
                         s.signals.push_back(sg.as<std::string>());
@@ -204,6 +215,83 @@ static std::vector<FlowSpec> parse_flows(const YAML::Node& list) {
         out.push_back(std::move(f));
     }
     return out;
+}
+
+static PipelineSpec parse_pipeline(const YAML::Node& n) {
+    PipelineSpec p;
+    if (!n || !n.IsMap()) return p;
+    if (n["nodes"] && n["nodes"].IsSequence())
+        for (const auto& e : n["nodes"]) {
+            PipelineNodeSpec s;
+            s.id          = get_or<int>(e, "id", 0);
+            s.type        = get_or<std::string>(e, "type", "");
+            s.name        = get_or<std::string>(e, "name", "");
+            s.x           = get_or<float>(e, "x", 0.0f);
+            s.y           = get_or<float>(e, "y", 0.0f);
+            s.device      = get_or<std::string>(e, "device", "");
+            s.baudrate    = get_or<uint32_t>(e, "baudrate", s.baudrate);
+            s.virtual_can = get_or<bool>(e, "virtual", false);
+            s.fd            = get_or<bool>(e, "fd", false);
+            s.data_baudrate = get_or<uint32_t>(e, "data_baudrate", s.data_baudrate);
+            s.dbc         = get_or<std::string>(e, "dbc", "");
+            s.xcp_tx_id      = get_or<uint32_t>(e, "tx_id", s.xcp_tx_id);
+            s.xcp_rx_id      = get_or<uint32_t>(e, "rx_id", s.xcp_rx_id);
+            s.xcp_addr_ext   = get_or<int>(e, "addr_ext", s.xcp_addr_ext);
+            s.xcp_timeout_ms = get_or<int>(e, "timeout_ms", s.xcp_timeout_ms);
+            s.xcp_pad        = get_or<bool>(e, "pad", s.xcp_pad);
+            s.format      = get_or<std::string>(e, "format", "mcap");
+            if (e["channels"] && e["channels"].IsSequence())
+                for (const auto& c : e["channels"]) s.channels.push_back(c.as<std::string>());
+            p.nodes.push_back(std::move(s));
+        }
+    if (n["links"] && n["links"].IsSequence())
+        for (const auto& e : n["links"])
+            if (e.IsSequence() && e.size() == 4)
+                p.links.push_back({e[0].as<int>(), e[1].as<int>(), e[2].as<int>(), e[3].as<int>()});
+    return p;
+}
+
+static void emit_pipeline(YAML::Emitter& out, const PipelineSpec& p) {
+    if (p.nodes.empty()) return;
+    out << YAML::Key << "pipeline" << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "nodes" << YAML::Value << YAML::BeginSeq;
+    for (const auto& n : p.nodes) {
+        out << YAML::BeginMap;
+        out << YAML::Key << "id" << YAML::Value << n.id;
+        out << YAML::Key << "type" << YAML::Value << n.type;
+        if (!n.name.empty()) out << YAML::Key << "name" << YAML::Value << n.name;
+        out << YAML::Key << "x" << YAML::Value << n.x << YAML::Key << "y" << YAML::Value << n.y;
+        if (n.type == "hw_socketcan" || n.type == "virtual_socketcan") {
+            if (!n.device.empty()) out << YAML::Key << "device" << YAML::Value << n.device;
+            out << YAML::Key << "channels" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+            for (const auto& c : n.channels) out << c;
+            out << YAML::EndSeq;
+        } else if (n.type == "baudrate") {
+            out << YAML::Key << "baudrate" << YAML::Value << n.baudrate;
+            out << YAML::Key << "virtual" << YAML::Value << n.virtual_can;
+            if (n.fd) {
+                out << YAML::Key << "fd" << YAML::Value << true;
+                out << YAML::Key << "data_baudrate" << YAML::Value << n.data_baudrate;
+            }
+        } else if (n.type == "xcp") {
+            out << YAML::Key << "tx_id" << YAML::Value << YAML::Hex << n.xcp_tx_id << YAML::Dec;
+            out << YAML::Key << "rx_id" << YAML::Value << YAML::Hex << n.xcp_rx_id << YAML::Dec;
+            out << YAML::Key << "addr_ext" << YAML::Value << n.xcp_addr_ext;
+            out << YAML::Key << "timeout_ms" << YAML::Value << n.xcp_timeout_ms;
+            out << YAML::Key << "pad" << YAML::Value << n.xcp_pad;
+        } else if (n.type == "decode") {
+            out << YAML::Key << "dbc" << YAML::Value << n.dbc;
+        } else if (n.type == "log") {
+            out << YAML::Key << "format" << YAML::Value << n.format;
+        }
+        out << YAML::EndMap;
+    }
+    out << YAML::EndSeq;
+    out << YAML::Key << "links" << YAML::Value << YAML::BeginSeq;
+    for (const auto& l : p.links)
+        out << YAML::Flow << YAML::BeginSeq << l.from_node << l.from_port << l.to_node << l.to_port << YAML::EndSeq;
+    out << YAML::EndSeq;
+    out << YAML::EndMap;
 }
 
 static Config parse_config(const YAML::Node& root) {
@@ -246,15 +334,45 @@ static Config parse_config(const YAML::Node& root) {
     result.flows  = parse_flows(root["flows"]);
     result.debug_history = parse_debug_history(root["debug_history"]);
     result.debug_flows   = parse_flows(root["debug_flows"]);
+    if (root["blf_channels"] && root["blf_channels"].IsMap())
+        for (const auto& kv : root["blf_channels"])
+            result.blf_channels[kv.first.as<int>()] = kv.second.as<std::string>();
     if (root["dbc_history"] && root["dbc_history"].IsSequence())
         for (const auto& n : root["dbc_history"])
             result.dbc_history.push_back(n.as<std::string>());
 
+    result.pipeline = parse_pipeline(root["pipeline"]);
+
+    if (const auto& x = root["xcp"]; x && x.IsMap()) {
+        auto& c   = result.xcp;
+        c.target  = get_or<std::string>(x, "target", "");
+        c.elf     = get_or<std::string>(x, "elf", "");
+        c.a2l     = get_or<std::string>(x, "a2l", "");
+        c.poll_ms = get_or<int>(x, "poll_ms", c.poll_ms);
+        if (const auto& m = x["measure"]; m && m.IsSequence())
+            for (const auto& e : m) {
+                XcpMeasureConfig mc;
+                if (e.IsScalar()) mc.name = e.as<std::string>();
+                else {
+                    mc.name  = get_or<std::string>(e, "name", "");
+                    mc.event = get_or<int>(e, "event", -1);
+                }
+                if (!mc.name.empty()) c.measure.push_back(std::move(mc));
+            }
+        if (const auto& pl = x["plots"]; pl && pl.IsSequence())
+            for (const auto& e : pl) {
+                std::vector<std::string> names;
+                if (e.IsSequence())
+                    for (const auto& n : e) names.push_back(n.as<std::string>());
+                c.plots.push_back(std::move(names));
+            }
+    }
+
     const auto& interfaces = root["interfaces"];
-    if (!interfaces)
+    if (!interfaces && result.pipeline.nodes.empty())
         throw std::runtime_error("Config: missing 'interfaces' key");
 
-    for (const auto& entry : interfaces) {
+    if (interfaces) for (const auto& entry : interfaces) {
         InterfaceConfig cfg;
         cfg.name = entry.first.as<std::string>();
         if (entry.second) {
@@ -265,12 +383,18 @@ static Config parse_config(const YAML::Node& root) {
                 // New format: vcan0: { dbc: ..., baudrate: ..., actions: [...] }
                 cfg.dbc      = get_or<std::string>(entry.second, "dbc", "");
                 cfg.baudrate = get_or<uint32_t>(entry.second, "baudrate", 0);
+                cfg.virtual_can = get_or<bool>(entry.second, "virtual", false);
+                cfg.fd            = get_or<bool>(entry.second, "fd", false);
+                cfg.data_baudrate = get_or<uint32_t>(entry.second, "data_baudrate", 0);
+                cfg.live        = get_or<bool>(entry.second, "live", true);
+                cfg.log         = get_or<bool>(entry.second, "log", true);
                 if (entry.second["actions"])
                     cfg.actions = parse_actions(entry.second["actions"], cfg.name);
             }
         }
         result.interfaces.push_back(std::move(cfg));
     }
+    sync_pipeline(result);
     return result;
 }
 
@@ -344,6 +468,8 @@ static void emit_flows(YAML::Emitter& out, const char* key, const std::vector<Fl
                         out << YAML::Key << "interface" << YAML::Value << n.interface;
                     if (!n.signals.empty())
                         out << YAML::Key << "signals" << YAML::Value << YAML::Flow << n.signals;
+                    if (!n.inputs.empty())
+                        out << YAML::Key << "inputs" << YAML::Value << YAML::Flow << n.inputs;
                     out << YAML::Key << "code" << YAML::Value << YAML::Literal << n.code;
                 } else if (n.type == "generator") {
                     out << YAML::Key << "wave"      << YAML::Value << n.wave;
@@ -355,9 +481,17 @@ static void emit_flows(YAML::Emitter& out, const char* key, const std::vector<Fl
                 } else if (n.type == "csv") {
                     out << YAML::Key << "signals" << YAML::Value << YAML::Flow << n.signals;
                     out << YAML::Key << "path"    << YAML::Value << n.path;
-                } else if (n.type == "const") {
+                } else if (n.type == "const" || n.type == "integrator") {
                     out << YAML::Key << "offset" << YAML::Value << n.offset;
-                } else if (n.type == "compare") {
+                } else if (n.type == "sin" || n.type == "cos") {
+                    out << YAML::Key << "degrees" << YAML::Value << n.degrees;
+                } else if (n.type == "gain") {
+                    out << YAML::Key << "gain" << YAML::Value << n.gain;
+                } else if (n.type == "slider") {
+                    out << YAML::Key << "min" << YAML::Value << n.min;
+                    out << YAML::Key << "max" << YAML::Value << n.max;
+                    out << YAML::Key << "value" << YAML::Value << n.value;
+                } else if (n.type == "compare" || n.type == "rs") {
                     out << YAML::Key << "op" << YAML::Value << n.op;
                 } else if (n.type == "movavg" || n.type == "fft") {
                     out << YAML::Key << "window" << YAML::Value << n.window;
@@ -409,6 +543,14 @@ std::string config_to_yaml(const Config& config) {
         out << YAML::Key << "dbc" << YAML::Value << iface.dbc;
         if (iface.baudrate > 0)
             out << YAML::Key << "baudrate" << YAML::Value << iface.baudrate;
+        if (iface.fd) {
+            out << YAML::Key << "fd" << YAML::Value << true;
+            if (iface.data_baudrate > 0)
+                out << YAML::Key << "data_baudrate" << YAML::Value << iface.data_baudrate;
+        }
+        if (iface.virtual_can) out << YAML::Key << "virtual" << YAML::Value << true;
+        if (!iface.live)       out << YAML::Key << "live" << YAML::Value << false;
+        if (!iface.log)        out << YAML::Key << "log" << YAML::Value << false;
         if (!iface.actions.empty()) {
             out << YAML::Key << "actions" << YAML::Value << YAML::BeginSeq;
             for (const auto& a : iface.actions)
@@ -418,6 +560,8 @@ std::string config_to_yaml(const Config& config) {
         out << YAML::EndMap;
     }
     out << YAML::EndMap;
+
+    emit_pipeline(out, config.pipeline);
 
     out << YAML::Key << "graphs" << YAML::Value << YAML::BeginSeq;
     for (const auto& g : config.graphs) {
@@ -459,6 +603,13 @@ std::string config_to_yaml(const Config& config) {
         out << YAML::EndSeq;
     }
 
+    if (!config.blf_channels.empty()) {
+        out << YAML::Key << "blf_channels" << YAML::Value << YAML::BeginMap;
+        for (const auto& [ch, name] : config.blf_channels)
+            out << YAML::Key << ch << YAML::Value << name;
+        out << YAML::EndMap;
+    }
+
     if (!config.dbc_history.empty()) {
         out << YAML::Key << "dbc_history" << YAML::Value << YAML::BeginSeq;
         for (const auto& d : config.dbc_history)
@@ -483,6 +634,7 @@ std::string config_to_yaml(const Config& config) {
             for (const auto& t : d.tabs) {
                 out << YAML::BeginMap;
                 out << YAML::Key << "name" << YAML::Value << t.name;
+                if (t.xy) out << YAML::Key << "xy" << YAML::Value << true;
                 out << YAML::Key << "plots" << YAML::Value << YAML::BeginSeq;
                 for (const auto& p : t.plots)
                     out << YAML::Flow << p;
@@ -495,6 +647,27 @@ std::string config_to_yaml(const Config& config) {
 
     emit_flows(out, "flows", config.flows);
     emit_flows(out, "debug_flows", config.debug_flows);
+
+    if (config.xcp != XcpConfig{}) {
+        const auto& x = config.xcp;
+        out << YAML::Key << "xcp" << YAML::Value << YAML::BeginMap;
+        if (!x.target.empty()) out << YAML::Key << "target" << YAML::Value << x.target;
+        out << YAML::Key << "elf" << YAML::Value << x.elf;
+        if (!x.a2l.empty()) out << YAML::Key << "a2l" << YAML::Value << x.a2l;
+        out << YAML::Key << "poll_ms" << YAML::Value << x.poll_ms;
+        out << YAML::Key << "measure" << YAML::Value << YAML::BeginSeq;
+        for (const auto& m : x.measure) {
+            out << YAML::Flow << YAML::BeginMap << YAML::Key << "name" << YAML::Value << m.name;
+            if (m.event >= 0) out << YAML::Key << "event" << YAML::Value << m.event;
+            out << YAML::EndMap;
+        }
+        out << YAML::EndSeq;
+        out << YAML::Key << "plots" << YAML::Value << YAML::BeginSeq;
+        for (const auto& p : x.plots)
+            out << YAML::Flow << p;
+        out << YAML::EndSeq;
+        out << YAML::EndMap;
+    }
 
     out << YAML::EndMap;
 

@@ -2,6 +2,7 @@
 
 #include "AppState.hpp"
 #include "FileBrowser.hpp"
+#include "ImNodesPan.hpp"
 #include "Window.hpp"
 #include "flow/FlowEngine.hpp"
 
@@ -11,6 +12,7 @@
 #include <vector>
 
 struct ImNodesContext;
+struct ImNodesEditorContext;
 
 // What the editor needs from its surroundings: the flow list (live engine, or the
 // offline flows of the Debug view) and the messages/signals the CAN blocks can pick.
@@ -36,6 +38,7 @@ public:
     // Offline: flows run over a loaded log; no CAN Out blocks, no live values.
     virtual bool offline() const { return false; }
     virtual void trigger(std::size_t /*flow*/, int /*node_id*/) {}   // live: send a can_out block now
+    virtual void set_control(std::size_t /*flow*/, int /*node_id*/, double /*value*/) {}   // live: slider value / button press
     // Offline: writes the table of a csv block (from the last run) to path. Returns a status text.
     virtual std::string export_csv(std::size_t /*flow*/, int /*node_id*/, const std::string& /*path*/) {
         return "not available";
@@ -97,8 +100,10 @@ private:
     AppState&                    state_;
     std::unique_ptr<FlowBackend> backend_;
     std::string                  title_;
-    ImNodesContext* ctx_ = nullptr;
+    ImNodesContext*       ctx_ = nullptr;
+    ImNodesEditorContext* editor_ = nullptr;   // own editor: CreateContext() only sets the default one on the *current* context
     std::string     theme_;
+    ImNodesZoom     zoom_;
 
     FlowSpec    edit_;
     FlowSpec    applied_;

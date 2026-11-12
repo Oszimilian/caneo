@@ -33,7 +33,8 @@ public:
     // Unpaced read of the decoded (/data) channels, in time order.
     // fn(log_time_ns, interface, message name, signals) returns false to stop.
     void read_signals(const std::function<bool(uint64_t, const std::string&, const std::string&,
-                                               const std::vector<DecodedSignal>&)>& fn) const;
+                                               const std::vector<DecodedSignal>&)>& fn,
+                      const std::function<void(double)>& on_progress = {}) const;
 
 private:
     std::string path_;

@@ -3,11 +3,14 @@
 #include "DebugView.hpp"
 #include "GraphWindow.hpp"
 #include "FlowEditorWindow.hpp"
+#include "PipelineWindow.hpp"
 #include "FlowsWindow.hpp"
 #include "GuiStyle.hpp"
 #include "LogViewer.hpp"
 #include "config/AppConfig.hpp"
+#include "config/RecentConfigs.hpp"
 #include "DbcEditor.hpp"
+#include "XcpView.hpp"
 #include "ModelWindow.hpp"
 #include "SendWindow.hpp"
 #include "SettingsWindow.hpp"
@@ -36,6 +39,7 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs, AppState& state)
 {
     debug_view_ = std::make_unique<DebugView>(state_);
     dbc_editor_ = std::make_unique<DbcEditor>(state_);
+    xcp_view_   = std::make_unique<XcpView>(state_);
 
     auto graph_window = std::make_unique<GraphWindow>();
     graph_window_ = graph_window.get();
@@ -43,7 +47,8 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs, AppState& state)
 
     auto trace_container = std::make_unique<TraceContainerWindow>();
     for (const auto& cfg : iface_configs)
-        trace_container->add(std::make_unique<TraceWindow>(cfg.name, *graph_window_));
+        if (cfg.live)
+            trace_container->add(std::make_unique<TraceWindow>(cfg.name, *graph_window_));
     TraceContainerWindow* tc = trace_container.get();
     windows_.push_back(std::move(trace_container));
 
@@ -63,7 +68,10 @@ Gui::Gui(const std::vector<InterfaceConfig>& iface_configs, AppState& state)
     windows_.push_back(std::move(flows_list));
     windows_.push_back(std::move(flow_editor));
 
+    pipeline_ = std::make_unique<PipelineWindow>(state_);
+
     auto settings = std::make_unique<SettingsWindow>(state_);
+    settings->set_pipeline(pipeline_.get());
     settings_window_ = settings.get();
     windows_.push_back(std::move(settings));
 }
@@ -154,7 +162,7 @@ void Gui::render_menu_bar()
             settings_window_->open_save_as_dialog();
         ImGui::Separator();
         if (ImGui::MenuItem("Settings..."))
-            settings_window_->visible = true;
+            mode_ = Mode::Settings;
         ImGui::Separator();
         if (ImGui::MenuItem("Save & restart"))
             if (state_.save())
@@ -188,9 +196,15 @@ void Gui::render_menu_bar()
         ImGui::EndMenu();
     }
 
+    if (mode_ == Mode::Xcp && ImGui::BeginMenu("XCP")) {
+        xcp_view_->render_menu_items();
+        ImGui::EndMenu();
+    }
+
     if (live && ImGui::BeginMenu("View")) {
         for (auto& w : windows_)
-            ImGui::MenuItem(w->title(), nullptr, &w->visible);
+            if (w.get() != settings_window_)
+                ImGui::MenuItem(w->title(), nullptr, &w->visible);
         ImGui::Separator();
         if (ImGui::MenuItem("Reset layout")) {
             reset_layout_ = true;
@@ -316,7 +330,7 @@ void Gui::render_mode_toggle()
     // Two-segment switch centred in the menu bar.
     const ImGuiStyle& style = ImGui::GetStyle();
     const float       bw    = ImGui::GetFontSize() * 4.5f;
-    const float       total = bw * 3 + style.ItemSpacing.x * 2;
+    const float       total = bw * 5 + style.ItemSpacing.x * 4;
     ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total) * 0.5f);
 
     const auto segment = [&](const char* label, Mode m, const char* tip) {
@@ -334,6 +348,125 @@ void Gui::render_mode_toggle()
     segment("Debug", Mode::Debug, "Offline: inspect MCAP / BLF log files");
     ImGui::SameLine();
     segment("DBC", Mode::Dbc, "Create and edit DBC files: nodes, messages, signals, value tables");
+    ImGui::SameLine();
+    segment("XCP", Mode::Xcp, "Measure and calibrate an ECU over XCP on CAN (FD): ELF variables, live plots, edit values");
+    ImGui::SameLine();
+    segment("Settings", Mode::Settings, "Appearance, configuration file, logging, channels");
+}
+
+void Gui::set_channel_control(std::function<ChannelResult(bool)> start, std::function<void()> stop)
+{
+    channel_start_ = std::move(start);
+    channel_stop_  = std::move(stop);
+}
+
+Gui::ChannelResult Gui::start_channels_now(bool graphical)
+{
+    if (!channel_start_) return {};
+    const ChannelResult res = channel_start_(graphical);
+    channels_running_ = res.running;
+    return res;
+}
+
+// Start / Stop: the interfaces are only set up (password!) and opened when the user asks for it.
+void Gui::render_channel_button()
+{
+    if (!channel_start_) return;
+
+    if (starter_.joinable() && !channels_starting_) {   // the start thread finished
+        starter_.join();
+        channels_running_ = start_result_.running;
+        state_.set_status(start_result_.message, !start_result_.running || start_result_.message.find('\n') != std::string::npos);
+    }
+
+    if (channels_starting_) {
+        ImGui::BeginDisabled();
+        ImGui::SmallButton("Starting...");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Setting up the CAN interfaces - enter the password if asked");
+    } else if (channels_running_) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.2f, 0.15f, 1.0f));
+        if (ImGui::SmallButton("Stop")) {
+            channel_stop_();
+            channels_running_ = false;
+            state_.set_status("Channels stopped");
+        }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Closes all CAN channels");
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.2f, 1.0f));
+        if (ImGui::SmallButton("Start")) {
+            channels_starting_ = true;
+            starter_ = std::jthread([this] {
+                start_result_     = channel_start_(true);
+                channels_starting_ = false;
+            });
+        }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Sets up the CAN interfaces (asks for the password once, only if needed) and opens the channels");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+}
+
+// First start without a config file: pick one from the history, browse for one, or go on with a blank config.
+void Gui::render_welcome()
+{
+    if (search_config_) {
+        search_config_ = false;
+        recent_ = recent_configs();
+        ImGui::OpenPopup("Select configuration");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 42, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Select configuration", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const float em = ImGui::GetFontSize();
+        ImGui::TextWrapped("No caneo.yaml in %s.", std::filesystem::current_path().string().c_str());
+        ImGui::Spacing();
+
+        ImGui::TextUnformatted("Recently used");
+        if (recent_.empty())
+            ImGui::TextDisabled("(none yet)");
+        std::string chosen;
+        if (!recent_.empty() && ImGui::BeginChild("##recent", ImVec2(0, std::min<float>(recent_.size(), 8) * ImGui::GetFrameHeightWithSpacing() + 4),
+                                                  ImGuiChildFlags_Border)) {
+            for (const auto& r : recent_) {
+                const std::filesystem::path p(r);
+                const std::string label = p.filename().string() + "   " + p.parent_path().string();
+                if (ImGui::Selectable(label.c_str()))
+                    chosen = r;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", r.c_str());
+            }
+        }
+        if (!recent_.empty()) ImGui::EndChild();
+
+        ImGui::Spacing();
+        if (ImGui::Button("Browse...", ImVec2(em * 8, 0)))
+            welcome_browser_.open("Select config", FileBrowser::Mode::Open, {".yaml", ".yml"}, std::filesystem::current_path());
+        ImGui::SameLine();
+        if (ImGui::Button("Blank config", ImVec2(em * 8, 0)))
+            ImGui::CloseCurrentPopup();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Start empty; Save writes %s", state_.path().c_str());
+
+        if (const auto picked = welcome_browser_.render())
+            chosen = picked->string();
+
+        if (!chosen.empty()) {
+            if (state_.load(chosen)) {
+                state_.request_restart();   // channels, DBCs ... are built from the config at start-up
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (state_.status_error())
+            ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", state_.status().c_str());
+        ImGui::EndPopup();
+    }
 }
 
 void Gui::render_status()
@@ -345,12 +478,14 @@ void Gui::render_status()
 
     ImGui::BeginGroup();
 
+    render_channel_button();
+
     if (state_.channels_changed()) {
         ImGui::TextColored(ImVec4(0.85f, 0.5f, 0.05f, 1.0f), "restart required");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("CAN channel settings were changed - File > Save & restart");
         if (ImGui::IsItemClicked())
-            settings_window_->visible = true;
+            mode_ = Mode::Settings;
         ImGui::SameLine();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
@@ -393,7 +528,7 @@ void Gui::render_status()
             const std::string  last = log_controller_->last_path();
             ImGui::SameLine();
             if (ImGui::SmallButton(name)) {
-                if (cmd.empty()) settings_window_->visible = true;
+                if (cmd.empty()) mode_ = Mode::Settings;
                 else             open_in_viewer(last);
             }
             if (ImGui::IsItemHovered()) {
@@ -478,9 +613,10 @@ void Gui::run()
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+
     // Start-up problems (missing interface, broken DBC) are shown in Settings.
     if (state_.status_error())
-        settings_window_->visible = true;
+        mode_ = Mode::Settings;
 
     while (!glfwWindowShouldClose(window) && !stop_requested_ && !state_.restart_requested()) {
         glfwPollEvents();
@@ -506,11 +642,16 @@ void Gui::run()
         ImGui::NewFrame();
 
         render_menu_bar();   // before the dockspace so it reserves its space
+        render_welcome();
 
         if (mode_ == Mode::Debug) {
             debug_view_->render();
         } else if (mode_ == Mode::Dbc) {
             dbc_editor_->render();
+        } else if (mode_ == Mode::Xcp) {
+            xcp_view_->render();
+        } else if (mode_ == Mode::Settings) {
+            settings_window_->render_full();
         } else {
             const ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
             if (reset_layout_) {
@@ -537,6 +678,8 @@ void Gui::run()
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
+
+    xcp_view_->shutdown();   // its worker logs through objects of run_gui
 
     // Save settings explicitly so they're not lost on signal shutdown.
     ImGui::SaveIniSettingsToDisk(io.IniFilename);

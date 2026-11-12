@@ -19,5 +19,7 @@ class CaneoConan(ConanFile):
         self.requires("sol2/3.3.0")
         self.requires("gflags/2.2.2")
         self.requires("glfw/3.4")
+        self.requires("elfio/3.12")      # ELF sections / symbols (XCP)
+        self.requires("libdwarf/2.1.0")  # DWARF types of the ELF variables (XCP)
         # Dear ImGui (docking branch) and ImPlot are fetched by CMake, see
         # cmake/ImGui.cmake: conan only ships the master branch without docking.
