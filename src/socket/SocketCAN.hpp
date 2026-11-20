@@ -3,6 +3,8 @@
 #include "Socket.hpp"
 
 #include <boost/asio.hpp>
+#include <chrono>
+#include <optional>
 #include <format>
 #include <linux/can.h>
 #include <ostream>
@@ -35,6 +37,10 @@ private:
     boost::asio::posix::stream_descriptor descriptor_;
     std::string interface_;
     bool fd_enabled_ = false;   // CAN_RAW_FD_FRAMES accepted
+    // Hardware timestamps run on the adapter's / driver's own clock (peak_usb: CLOCK_MONOTONIC, i.e. time
+    // since boot), not on the wall clock. hw_offset_ = smallest (wall clock at receive - hw timestamp) seen
+    // so far; a hw timestamp + hw_offset_ is a wall clock time with the hardware's precision.
+    std::optional<std::chrono::nanoseconds> hw_offset_;
 };
 
 template <>

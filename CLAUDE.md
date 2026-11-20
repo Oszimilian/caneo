@@ -105,6 +105,8 @@ A CAN bus visualization and send tool written in C++23.
 - `Socket` — base class for any incoming data source
 - `SocketCAN` — derived from `Socket`; reads from a Linux SocketCAN interface asynchronously via `boost::asio`
   - `CAN_RAW_RECV_OWN_MSGS` is enabled so self-sent frames appear in the trace
+  - RX timestamps via SO_TIMESTAMPING: hardware timestamps run on the adapter/driver clock (peak_usb: CLOCK_MONOTONIC),
+    so they are mapped to the wall clock with `hw_offset_` (smallest now - hw seen, reset on > 1 s jumps); software ts = realtime
   - Has `send(uint64_t id, const std::vector<uint8_t>& data)` for transmitting frames
 
 ## Frame hierarchy (`src/frame/`)

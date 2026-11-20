@@ -2,7 +2,7 @@
 virtual: false
 log_file_path: ~/Dokumente/Logs
 gui:
-  scale: 1
+  scale: 1.5
   theme: light
 logging:
   format: mcap
@@ -22,15 +22,23 @@ interfaces:
     virtual: true
     live: false
     log: false
+  can0:
+    dbc: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
+    baudrate: 1000000
+    log: false
+  can1:
+    dbc: ""
+    baudrate: 1000000
+    log: false
 pipeline:
   nodes:
     - id: 1
       type: live
-      x: 960
+      x: 960.000061
       y: 0
     - id: 2
       type: log
-      x: 960
+      x: 960.000061
       y: 150
       format: mcap
     - id: 3
@@ -40,23 +48,23 @@ pipeline:
       channels: [can2]
     - id: 4
       type: baudrate
-      x: 320
+      x: 319.999939
       y: 0
       baudrate: 1000000
       virtual: true
     - id: 5
       type: decode
-      x: 640
+      x: 639.999878
       y: 0
       dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
     - id: 6
       type: virtual_socketcan
-      x: 3
+      x: 3.00000024
       y: 333
       channels: [can6]
     - id: 7
       type: baudrate
-      x: 382
+      x: 381.999939
       y: 352
       baudrate: 1000000
       virtual: false
@@ -65,13 +73,44 @@ pipeline:
     - id: 8
       type: xcp
       name: ECU
-      x: 875
+      x: 874.999939
       y: 397
       tx_id: 0x7e0
       rx_id: 0x7e1
       addr_ext: 0
       timeout_ms: 100
       pad: false
+    - id: 9
+      type: hw_socketcan
+      x: -186
+      y: 765
+      device: usb:0c72:0011:@3-3.2.1.3
+      channels: [can0, can1]
+    - id: 10
+      type: baudrate
+      x: 367.000061
+      y: 765
+      baudrate: 1000000
+      virtual: false
+    - id: 11
+      type: decode
+      x: 722
+      y: 801.999878
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
+    - id: 12
+      type: live
+      x: 1153
+      y: 898.999939
+    - id: 13
+      type: baudrate
+      x: 372
+      y: 1008.99994
+      baudrate: 1000000
+      virtual: false
+    - id: 14
+      type: live
+      x: 843.000061
+      y: 1061
   links:
     - [3, 0, 4, 0]
     - [4, 0, 5, 0]
@@ -79,6 +118,11 @@ pipeline:
     - [5, 0, 2, 0]
     - [6, 0, 7, 0]
     - [7, 0, 8, 0]
+    - [9, 0, 10, 0]
+    - [10, 0, 11, 0]
+    - [11, 0, 12, 0]
+    - [9, 1, 13, 0]
+    - [13, 0, 14, 0]
 graphs:
   - name: Federweg
     window_s: 30
@@ -188,7 +232,7 @@ debug_history:
           - [can2/M01_Brake_Pressure_Front/Brake_Pressure_Front, can2/M01_Brake_Pressure_Rear/Brake_Pressure_Rear]
 flows:
   - name: Test
-    enabled: true
+    enabled: false
     step_ms: 10
     nodes:
       - id: 1
@@ -278,6 +322,22 @@ flows:
       - [10, 0, 11, 1]
       - [8, 0, 11, 2]
       - [11, 0, 12, 0]
+  - name: "Send: AMK1_FR_Setpoints"
+    enabled: false
+    step_ms: 5
+    nodes:
+      - id: 1
+        type: can_out
+        name: CAN Out
+        x: 268
+        y: 167
+        interface: can0
+        msg: AMK1_FR_Setpoints
+        signals: [AMK1_FR_Control_bInverterOn, AMK1_FR_Control_bDcOn, AMK1_FR_Control_bEnable, AMK1_FR_Control_bErrorReset, AMK1_FR_TarkgetVelocity, AMK1_FR_TorqueLimitPositiv, AMK1_FR_TorqueLimitNegativ]
+        period_ms: 10
+        sig_values: [0, 0, 0, 0, 0, 0, 0]
+    links:
+      []
 debug_flows:
   - name: flow 1
     enabled: true
@@ -543,13 +603,3 @@ debug_flows:
       - [27, 0, 26, 10]
       - [28, 0, 26, 11]
       - [33, 0, 26, 12]
-xcp:
-  target: ECU
-  elf: /home/maximilian/MABY/REALTIME/_BUILD/linux/model
-  a2l: /home/maximilian/MABY/REALTIME/_BUILD/model_ert_rtw/model.a2l
-  poll_ms: 50
-  measure:
-    - {name: model_P.SineWave_Amp, event: 0}
-    - {name: model_B.SineWave, event: 0}
-  plots:
-    - [model_P.SineWave_Amp, model_B.SineWave]

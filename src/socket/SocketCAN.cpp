@@ -146,14 +146,26 @@ bool SocketCAN::readFrame() {
         std::memcpy(&scm, CMSG_DATA(cm), sizeof(scm));
         const timespec& hw = scm.ts[2];
         const timespec& sw = scm.ts[0];
-        const timespec* chosen = (hw.tv_sec || hw.tv_nsec) ? &hw
-                               : (sw.tv_sec || sw.tv_nsec) ? &sw
-                                                           : nullptr;
-        if (chosen)
-            ts = std::chrono::system_clock::time_point(
-                std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                    std::chrono::seconds(chosen->tv_sec) +
-                    std::chrono::nanoseconds(chosen->tv_nsec)));
+        auto ns = [](const timespec& t) {
+            return std::chrono::seconds(t.tv_sec) + std::chrono::nanoseconds(t.tv_nsec);
+        };
+        auto wall = [](std::chrono::nanoseconds d) {
+            return std::chrono::system_clock::time_point(
+                std::chrono::duration_cast<std::chrono::system_clock::duration>(d));
+        };
+        if (hw.tv_sec || hw.tv_nsec) {
+            // The hardware clock is not the wall clock (peak_usb: time since boot) -> map it with the
+            // smallest observed offset (= the frame with the least receive latency). A jump of more than
+            // 1 s (adapter re-plugged, clock set, suspend) restarts the estimate.
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch());
+            const auto d = now - ns(hw);
+            if (!hw_offset_ || d < *hw_offset_ || d - *hw_offset_ > std::chrono::seconds(1))
+                hw_offset_ = d;
+            ts = wall(ns(hw) + *hw_offset_);
+        } else if (sw.tv_sec || sw.tv_nsec) {
+            ts = wall(ns(sw));   // kernel software timestamp: CLOCK_REALTIME
+        }
         break;
     }
 
