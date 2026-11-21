@@ -38,6 +38,7 @@ private:
     void render_appearance();
     void render_config_file();
     void render_logging();
+    void render_remote();
     void refresh_detected();
 
     AppState&                  state_;

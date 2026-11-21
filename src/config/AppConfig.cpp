@@ -59,9 +59,15 @@ AppConfig AppConfig::parse(int& argc, char* argv[]) {
         app.config_found = true;
     }
 
-    // Without a mode flag the GUI starts (--tui for the terminal UI).
-    if (!app.gui_mode && !app.tui_mode && !app.headless_mode && app.playback_path.empty())
+    // Without a mode flag the GUI starts (--tui for the terminal UI);
+    // a build without GUI (CANEO_GUI=OFF) runs headless instead.
+    if (!app.gui_mode && !app.tui_mode && !app.headless_mode && app.playback_path.empty()) {
+#if !defined(CANEO_HAS_GUI) || CANEO_HAS_GUI
         app.gui_mode = true;
+#else
+        app.headless_mode = true;
+#endif
+    }
 
     return app;
 }

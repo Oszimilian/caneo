@@ -1,0 +1,4 @@
+# name url revision (scarthgap)
+poky https://git.yoctoproject.org/poky 6b7c1066f778db5a6b3e35400617b10342988fa8
+meta-raspberrypi https://github.com/agherzan/meta-raspberrypi 018d44467c4f09eb63f8ea5e86e85d755250cf89
+meta-openembedded https://github.com/openembedded/meta-openembedded 2db6aece32c7f8ebf6015b468e1b4e21de072e3b

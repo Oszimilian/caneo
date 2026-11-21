@@ -4,14 +4,19 @@
 #include <map>
 #include <set>
 
+bool pipeline_is_device(const PipelineNodeSpec& n)
+{
+    return n.type == "hw_socketcan" || n.type == "virtual_socketcan" || n.type == "grpc_socketcan";
+}
+
 int pipeline_in_ports(const PipelineNodeSpec& n)
 {
-    return n.type == "hw_socketcan" || n.type == "virtual_socketcan" ? 0 : 1;
+    return pipeline_is_device(n) ? 0 : 1;
 }
 
 int pipeline_out_ports(const PipelineNodeSpec& n)
 {
-    if (n.type == "hw_socketcan" || n.type == "virtual_socketcan") return static_cast<int>(n.channels.size());
+    if (pipeline_is_device(n)) return static_cast<int>(n.channels.size());
     if (n.type == "baudrate" || n.type == "decode") return 1;   // xcp: input only
     return 0;
 }
@@ -45,6 +50,25 @@ PipelineSpec pipeline_from_interfaces(const Config& cfg)
 
     float y = 0.0f;
     for (const auto& i : cfg.interfaces) {
+        if (i.is_remote()) {   // remote channel: gRPC block, no baudrate (the server sets the bus up)
+            auto& dev = add("grpc_socketcan", 0, y);
+            dev.address  = i.grpc;
+            dev.channels = {i.remote_name()};
+            if (i.name.size() > i.remote_name().size() && i.name.ends_with(i.remote_name()))
+                dev.prefix = i.name.substr(0, i.name.size() - i.remote_name().size());
+            int last = dev.id;
+            if (!i.dbc.empty()) {
+                auto& dc = add("decode", 2 * DX, y);
+                dc.dbc = i.dbc;
+                link(last, 0, dc.id, 0);
+                last = dc.id;
+            }
+            if (i.live && live) link(last, 0, live, 0);
+            if (i.log && mcap)  link(last, 0, mcap, 0);
+            if (i.log && blf)   link(last, 0, blf, 0);
+            y += DY;
+            continue;
+        }
         const bool vir = cfg.virtual_can || i.virtual_can;
         auto& dev = add(vir ? "virtual_socketcan" : "hw_socketcan", 0, y);
         dev.channels = {i.name};
@@ -84,12 +108,19 @@ void derive_interfaces(Config& cfg)
     std::set<std::string> seen;
 
     for (const auto& dev : p.nodes) {
-        if (dev.type != "hw_socketcan" && dev.type != "virtual_socketcan") continue;
+        if (!pipeline_is_device(dev)) continue;
+        const bool remote = dev.type == "grpc_socketcan";
+        if (remote && (!cfg.grpc.enabled || dev.address.empty())) continue;   // gRPC switched off in Settings
         for (std::size_t port = 0; port < dev.channels.size(); ++port) {
             InterfaceConfig ic;
             ic.name = dev.channels[port];
             ic.live = ic.log = false;
             ic.virtual_can = dev.type == "virtual_socketcan";
+            if (remote && !ic.name.empty()) {
+                ic.grpc   = dev.address;
+                ic.remote = ic.name;
+                ic.name   = dev.prefix + ic.name;
+            }
             if (ic.name.empty() || seen.contains(ic.name)) continue;
 
             // follow the links downstream
@@ -106,7 +137,7 @@ void derive_interfaces(Config& cfg)
                 if (it == by_id.end()) continue;
                 const auto& n = *it->second;
                 connected = true;
-                if (n.type == "baudrate" && !baud_set) {
+                if (n.type == "baudrate" && !baud_set && !remote) {   // remote: the server owns the bus
                     baud_set = true;
                     ic.baudrate = n.virtual_can ? 0 : n.baudrate;
                     if (n.virtual_can) ic.virtual_can = true;
@@ -166,6 +197,8 @@ void sync_pipeline(Config& cfg)
 {
     if (cfg.pipeline.nodes.empty()) {
         if (cfg.interfaces.empty()) return;
+        // old file with remote channels in `interfaces:` -> keep them working
+        if (std::ranges::any_of(cfg.interfaces, &InterfaceConfig::is_remote)) cfg.grpc.enabled = true;
         cfg.pipeline = pipeline_from_interfaces(cfg);
     }
     derive_interfaces(cfg);

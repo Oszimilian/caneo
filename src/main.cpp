@@ -2,7 +2,9 @@
 #include "compat/print.hpp"
 #include "logger/LogReader.hpp"
 #include "modes/config_picker.hpp"
+#if CANEO_HAS_GUI
 #include "modes/run_gui.hpp"
+#endif
 #include "modes/run_live.hpp"
 #include "modes/run_playback.hpp"
 #include "modes/run_tui.hpp"
@@ -10,6 +12,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <stdexcept>
 #include <unistd.h>
 #include <vector>
 
@@ -71,7 +74,11 @@ int main(int argc, char* argv[]) {
     try {
         if (!app.playback_path.empty()) run_playback(app);
         else if (app.tui_mode)          run_tui(app);
+#if CANEO_HAS_GUI
         else if (app.gui_mode)          restart = run_gui(app);
+#else
+        else if (app.gui_mode)          throw std::runtime_error("built without GUI (CANEO_GUI=OFF), use --tui or --headless");
+#endif
         else                            run_live(app);
     } catch (const std::exception& e) {
         std::println(stderr, "Error: {}", e.what());

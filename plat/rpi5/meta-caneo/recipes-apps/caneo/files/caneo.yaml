@@ -1,0 +1,17 @@
+# caneo on the Raspberry Pi 5 (PCAN-M.2, 4 channels)
+# The channels are configured at boot by systemd-networkd
+# (/etc/systemd/network/80-can*.network); the values here must match,
+# then caneo finds them up and does not touch them.
+virtual: false
+log_file_path: /home/can/logs
+interfaces:
+  can0:
+    baudrate: 1000000
+  can1:
+    baudrate: 1000000
+  can2:
+    baudrate: 1000000
+    fd: true
+    data_baudrate: 5000000
+  can3:
+    baudrate: 1000000

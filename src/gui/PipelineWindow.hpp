@@ -5,6 +5,12 @@
 #include "ImNodesPan.hpp"
 #include "Window.hpp"
 #include "setup/CanDevices.hpp"
+#include "grpc/RemoteInterfaces.hpp"
+
+#include <expected>
+#include <future>
+#include <map>
+#include <optional>
 
 #include <format>
 #include <ostream>
@@ -38,6 +44,17 @@ private:
     void set_channels(PipelineNodeSpec& n, std::vector<std::string> channels);
     PipelineNodeSpec* find(int id);
     void refresh_devices();
+    void render_grpc_node(PipelineNodeSpec& n);
+    void query_remote(const PipelineNodeSpec& n);
+
+    // gRPC SocketCAN: ListInterfaces of the server, per block (worker thread, polled while rendering)
+    using RemoteResult = std::expected<RemoteInterfaceList, std::string>;
+    struct RemoteQuery {
+        std::string                    address;   // the query was made for this address
+        std::future<RemoteResult>      pending;
+        std::optional<RemoteResult>    result;
+    };
+    std::map<int, RemoteQuery> remote_;
 
     AppState&             state_;
     ImNodesContext*       ctx_ = nullptr;

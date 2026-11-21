@@ -58,6 +58,7 @@ void run_live(const AppConfig& app) {
     if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
         grpc_server->set_send_fn(send_fn);
+        grpc_server->set_interfaces(app.config.interfaces);
         grpc_server->set_log_controller(&log_controller);
     }
 
@@ -78,12 +79,15 @@ void run_live(const AppConfig& app) {
 
     for (std::size_t i = 0; i < sets.size(); ++i) {
         std::unique_ptr<Socket> sock;
-        if (app.grpc_client.empty()) {
+        const auto* ic = i < app.config.interfaces.size() ? &app.config.interfaces[i] : nullptr;
+        const bool remote = ic && ic->is_remote();   // gRPC SocketCAN block: channel of another caneo
+        if (app.grpc_client.empty() && !remote) {
             auto* can = new SocketCAN(io, sets[i].interface());
             socket_map[sets[i].interface()] = can;
             sock.reset(can);
         } else {
-            auto* gs = new SocketGrpc(io, sets[i].interface(), app.grpc_client);
+            auto* gs = remote ? new SocketGrpc(io, sets[i].interface(), ic->grpc, ic->remote_name())
+                              : new SocketGrpc(io, sets[i].interface(), app.grpc_client);
             grpc_socket_map[sets[i].interface()] = gs;
             sock.reset(gs);
         }

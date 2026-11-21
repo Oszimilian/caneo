@@ -1,0 +1,9 @@
+# PCAN-M.2 channel 3: CAN FD, 1 Mbit/s arbitration / 5 Mbit/s data (BRS)
+[Match]
+Name=can2
+
+[CAN]
+BitRate=1000000
+DataBitRate=5000000
+FDMode=yes
+RestartSec=100ms

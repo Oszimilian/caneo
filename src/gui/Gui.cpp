@@ -395,6 +395,7 @@ void Gui::render_channel_button()
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Closes all CAN channels");
+        render_reset_button();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.2f, 1.0f));
         if (ImGui::SmallButton("Start")) {
@@ -411,6 +412,35 @@ void Gui::render_channel_button()
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
+}
+
+void Gui::render_reset_button()
+{
+    if (!channel_reset_) return;
+    if (resetter_.joinable() && !channels_resetting_) {   // the reset thread finished
+        resetter_.join();
+        if (reset_result_.empty()) state_.set_status("Hardware reset done (channels down + up)");
+        else                       state_.set_status("Hardware reset: " + reset_result_, true);
+    }
+    ImGui::SameLine();
+    if (channels_resetting_) {
+        ImGui::BeginDisabled();
+        ImGui::SmallButton("Resetting...");
+        ImGui::EndDisabled();
+        return;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.50f, 0.10f, 1.0f));
+    if (ImGui::SmallButton("Reset HW")) {
+        channels_resetting_ = true;
+        resetter_ = std::jthread([this] {
+            reset_result_       = channel_reset_(true);
+            channels_resetting_ = false;
+        });
+    }
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Restarts the CAN controllers: every channel down + up (clears bus-off and error counters,\n"
+                          "the bitrate stays). Remote channels are reset on their gRPC server.");
 }
 
 // First start without a config file: pick one from the history, browse for one, or go on with a blank config.

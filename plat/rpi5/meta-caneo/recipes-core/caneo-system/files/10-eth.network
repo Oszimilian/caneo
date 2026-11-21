@@ -1,0 +1,8 @@
+# Static address for the gRPC link to the PC (no gateway)
+[Match]
+Name=eth0 end0
+
+[Network]
+Address=192.168.10.75/24
+ConfigureWithoutCarrier=yes
+LinkLocalAddressing=ipv6

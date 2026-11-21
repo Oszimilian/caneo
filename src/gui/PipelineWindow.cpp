@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -25,6 +26,7 @@ struct TypeInfo { const char* type; const char* label; ImU32 color; };
 constexpr TypeInfo TYPES[] = {
     { "hw_socketcan",      "Hardware SocketCAN", IM_COL32(180, 100,  30, 255) },
     { "virtual_socketcan", "Virtual SocketCAN",  IM_COL32(150, 120,  30, 255) },
+    { "grpc_socketcan",    "gRPC SocketCAN",     IM_COL32( 30, 130, 140, 255) },
     { "baudrate",          "Baudrate",           IM_COL32( 40,  90, 160, 255) },
     { "decode",            "Decode (DBC)",       IM_COL32(120,  60, 150, 255) },
     { "xcp",               "XCP master",         IM_COL32(170,  50,  70, 255) },
@@ -147,6 +149,8 @@ void PipelineWindow::add_node(const std::string& type, float x, float y)
         if (n.channels.empty())
             for (int i = 0;; ++i)
                 if (const std::string name = std::format("can{}", i); !used(name)) { n.channels = {name}; break; }
+    } else if (type == "grpc_socketcan") {
+        // address: default of PipelineNodeSpec; the channels come from the server (query_remote, all selected)
     } else if (type == "log") {
         n.format = "mcap";
     } else if (type == "xcp") {
@@ -166,6 +170,10 @@ void PipelineWindow::render_block_menu()
     ImGui::TextDisabled("Inputs");
     item("hw_socketcan");
     item("virtual_socketcan");
+    if (state_.config().grpc.enabled)
+        item("grpc_socketcan");
+    else
+        ImGui::TextDisabled("gRPC SocketCAN: enable in General > Remote (gRPC)");
     ImGui::Separator();
     ImGui::TextDisabled("Processing");
     item("baudrate");
@@ -192,6 +200,93 @@ void PipelineWindow::render_add_popup()
     ImGui::Separator();
     render_block_menu();
     ImGui::EndPopup();
+}
+
+void PipelineWindow::query_remote(const PipelineNodeSpec& n)
+{
+    auto& q   = remote_[n.id];
+    q.address = n.address;
+    q.result.reset();
+    q.pending = std::async(std::launch::async, [addr = n.address] { return list_remote_interfaces(addr); });
+}
+
+// gRPC SocketCAN: server address, local name prefix, channel selection from ListInterfaces.
+void PipelineWindow::render_grpc_node(PipelineNodeSpec& n)
+{
+    const float em = ImGui::GetFontSize();
+    if (!state_.config().grpc.enabled)
+        ImGui::TextColored(COL_ERROR, "inactive: enable General > Remote (gRPC)");
+
+    ImGui::SetNextItemWidth(em * 12);
+    ImGui::InputTextWithHint("##addr", "host:port", &n.address, ImGuiInputTextFlags_CharsNoBlank);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("caneo gRPC server, started there with --grpc_server (default port 50051)");
+    const bool addr_done = ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SameLine();
+
+    auto it = remote_.find(n.id);
+    const bool busy = it != remote_.end() && it->second.pending.valid();
+    ImGui::BeginDisabled(busy || n.address.empty());
+    const bool clicked = ImGui::SmallButton("Query");
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Ask the server for its channels");
+    // first render of the block, button, or address edited (on Enter / leaving the field, not per keystroke)
+    if (!busy && !n.address.empty() && (clicked || addr_done || it == remote_.end())) {
+        query_remote(n);
+        it = remote_.find(n.id);
+    }
+
+    ImGui::SetNextItemWidth(em * 6);
+    ImGui::InputTextWithHint("prefix", "none", &n.prefix, ImGuiInputTextFlags_CharsNoBlank);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Local channel name = prefix + name on the server, e.g. \"pi_\" -> pi_can0.\n"
+                          "Needed when a local channel has the same name.");
+
+    if (it == remote_.end()) return;
+    auto& q = it->second;
+    if (q.pending.valid()) {
+        if (q.pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            q.result = q.pending.get();
+            // a new block takes all channels of the server
+            if (q.result->has_value() && n.channels.empty()) {
+                std::vector<std::string> all;
+                for (const auto& r : (*q.result)->interfaces) all.push_back(r.name);
+                set_channels(n, std::move(all));
+            }
+        } else {
+            ImGui::TextDisabled("querying %s ...", q.address.c_str());
+        }
+    }
+    if (!q.result) return;
+    if (!q.result->has_value()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + em * 17);
+        ImGui::TextColored(COL_ERROR, "%s", q.result->error().c_str());
+        ImGui::PopTextWrapPos();
+        return;
+    }
+
+    const auto& list = **q.result;
+    ImGui::TextColored(COL_OK, "%s: %zu channel(s)", list.host.empty() ? q.address.c_str() : list.host.c_str(),
+                       list.interfaces.size());
+    // checkbox per server channel; the outputs follow the order of the server
+    for (const auto& r : list.interfaces) {
+        bool on = std::ranges::contains(n.channels, r.name);
+        std::string info = r.state;
+        if (r.bitrate) info += std::format(", {} k", r.bitrate / 1000);
+        if (r.fd) info += r.data_bitrate ? std::format(", FD {} k", r.data_bitrate / 1000) : ", FD";
+        if (ImGui::Checkbox(std::format("{}##rc_{}", r.name, r.name).c_str(), &on)) {
+            std::vector<std::string> ch;
+            for (const auto& o : list.interfaces)
+                if (o.name == r.name ? on : std::ranges::contains(n.channels, o.name)) ch.push_back(o.name);
+            for (const auto& c : n.channels)   // selected earlier but not on the server (any more)
+                if (!std::ranges::contains(ch, c) && std::ranges::none_of(list.interfaces, [&](const auto& o) { return o.name == c; }))
+                    ch.push_back(c);
+            set_channels(n, std::move(ch));
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", info.c_str());
+    }
 }
 
 void PipelineWindow::render_node(PipelineNodeSpec& n)
@@ -237,6 +332,8 @@ void PipelineWindow::render_node(PipelineNodeSpec& n)
         if (present && cur->channels != n.channels && cur->channels.size() == n.channels.size())
             n.channels = cur->channels;
     }
+
+    if (n.type == "grpc_socketcan") render_grpc_node(n);
 
     const bool editable = is_virtual || (is_hw && n.device.empty());
     if (editable) {
@@ -389,6 +486,18 @@ void PipelineWindow::render_node(PipelineNodeSpec& n)
     const int outs = pipeline_out_ports(n);
     for (int p = 0; p < outs; ++p) {
         ImNodes::BeginOutputAttribute(attr_id(n.id, true, p));
+        if (n.type == "grpc_socketcan") {
+            const auto& ch = n.channels[static_cast<std::size_t>(p)];
+            ImGui::Text("%s%s", n.prefix.c_str(), ch.c_str());
+            const auto q = remote_.find(n.id);
+            if (q != remote_.end() && q->second.result && q->second.result->has_value() &&
+                std::ranges::none_of((*q->second.result)->interfaces, [&](const auto& r) { return r.name == ch; })) {
+                ImGui::SameLine();
+                ImGui::TextColored(COL_ERROR, "not on server");
+            }
+            ImNodes::EndOutputAttribute();
+            continue;
+        }
         if (!is_hw && !is_virtual) {   // baudrate / decode: one plain output
             ImGui::TextUnformatted("out");
             ImNodes::EndOutputAttribute();

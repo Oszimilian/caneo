@@ -32,7 +32,8 @@ bool Config::same_channels(const Config& other) const {
         const auto& b = other.interfaces[i];
         if (a.name != b.name || a.dbc != b.dbc || a.baudrate != b.baudrate || a.fd != b.fd ||
             a.data_baudrate != b.data_baudrate ||
-            a.virtual_can != b.virtual_can || a.live != b.live || a.log != b.log)
+            a.virtual_can != b.virtual_can || a.live != b.live || a.log != b.log ||
+            a.grpc != b.grpc || a.remote != b.remote)
             return false;
     }
     return logging.format == other.logging.format;
@@ -240,6 +241,8 @@ static PipelineSpec parse_pipeline(const YAML::Node& n) {
             s.xcp_timeout_ms = get_or<int>(e, "timeout_ms", s.xcp_timeout_ms);
             s.xcp_pad        = get_or<bool>(e, "pad", s.xcp_pad);
             s.format      = get_or<std::string>(e, "format", "mcap");
+            s.address     = get_or<std::string>(e, "address", s.address);
+            s.prefix      = get_or<std::string>(e, "prefix", "");
             if (e["channels"] && e["channels"].IsSequence())
                 for (const auto& c : e["channels"]) s.channels.push_back(c.as<std::string>());
             p.nodes.push_back(std::move(s));
@@ -263,6 +266,12 @@ static void emit_pipeline(YAML::Emitter& out, const PipelineSpec& p) {
         out << YAML::Key << "x" << YAML::Value << n.x << YAML::Key << "y" << YAML::Value << n.y;
         if (n.type == "hw_socketcan" || n.type == "virtual_socketcan") {
             if (!n.device.empty()) out << YAML::Key << "device" << YAML::Value << n.device;
+            out << YAML::Key << "channels" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+            for (const auto& c : n.channels) out << c;
+            out << YAML::EndSeq;
+        } else if (n.type == "grpc_socketcan") {
+            out << YAML::Key << "address" << YAML::Value << n.address;
+            if (!n.prefix.empty()) out << YAML::Key << "prefix" << YAML::Value << n.prefix;
             out << YAML::Key << "channels" << YAML::Value << YAML::Flow << YAML::BeginSeq;
             for (const auto& c : n.channels) out << c;
             out << YAML::EndSeq;
@@ -306,6 +315,8 @@ static Config parse_config(const YAML::Node& root) {
         result.gui.theme      = get_or<std::string>(gui, "theme", result.gui.theme);
         result.gui.autosave_s = get_or<int>(gui, "autosave_s", result.gui.autosave_s);
     }
+    if (const auto& grpc = root["grpc"])
+        result.grpc.enabled = get_or<bool>(grpc, "enabled", false);
 
     if (const auto& log = root["logging"]) {
         auto& o = result.logging;
@@ -388,6 +399,8 @@ static Config parse_config(const YAML::Node& root) {
                 cfg.data_baudrate = get_or<uint32_t>(entry.second, "data_baudrate", 0);
                 cfg.live        = get_or<bool>(entry.second, "live", true);
                 cfg.log         = get_or<bool>(entry.second, "log", true);
+                cfg.grpc        = get_or<std::string>(entry.second, "grpc", "");
+                cfg.remote      = get_or<std::string>(entry.second, "remote", "");
                 if (entry.second["actions"])
                     cfg.actions = parse_actions(entry.second["actions"], cfg.name);
             }
@@ -529,6 +542,12 @@ std::string config_to_yaml(const Config& config) {
         out << YAML::Key << "autosave_s" << YAML::Value << config.gui.autosave_s;
     out << YAML::EndMap;
 
+    if (config.grpc.enabled) {
+        out << YAML::Key << "grpc" << YAML::Value << YAML::BeginMap;
+        out << YAML::Key << "enabled" << YAML::Value << true;
+        out << YAML::EndMap;
+    }
+
     out << YAML::Key << "logging" << YAML::Value << YAML::BeginMap;
     out << YAML::Key << "format"          << YAML::Value << config.logging.format;
     out << YAML::Key << "raw"             << YAML::Value << config.logging.raw;
@@ -551,6 +570,11 @@ std::string config_to_yaml(const Config& config) {
         if (iface.virtual_can) out << YAML::Key << "virtual" << YAML::Value << true;
         if (!iface.live)       out << YAML::Key << "live" << YAML::Value << false;
         if (!iface.log)        out << YAML::Key << "log" << YAML::Value << false;
+        if (iface.is_remote()) {
+            out << YAML::Key << "grpc" << YAML::Value << iface.grpc;
+            if (!iface.remote.empty() && iface.remote != iface.name)
+                out << YAML::Key << "remote" << YAML::Value << iface.remote;
+        }
         if (!iface.actions.empty()) {
             out << YAML::Key << "actions" << YAML::Value << YAML::BeginSeq;
             for (const auto& a : iface.actions)

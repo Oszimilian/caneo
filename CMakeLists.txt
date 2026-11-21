@@ -14,16 +14,21 @@ find_package(mcap REQUIRED)
 find_package(lua REQUIRED)
 find_package(sol2 REQUIRED)
 find_package(gflags REQUIRED)
-find_package(glfw3 REQUIRED)
-find_package(OpenGL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(ZLIB REQUIRED)   # BLF containers; comes with grpc/protobuf
 find_package(elfio REQUIRED)     # XCP: ELF symbols
 find_package(libdwarf REQUIRED)  # XCP: DWARF types
 
 option(CANEO_STATIC_RUNTIME "Link libstdc++/libgcc statically (portable binaries)" OFF)
+# OFF = headless build (TUI / --headless / gRPC only) without GLFW/OpenGL/Dear ImGui,
+# e.g. for the Raspberry Pi image (plat/rpi5)
+option(CANEO_GUI "Build the Dear ImGui GUI (needs GLFW + OpenGL)" ON)
 
-include(cmake/ImGui.cmake)
+if(CANEO_GUI)
+    find_package(glfw3 REQUIRED)
+    find_package(OpenGL REQUIRED)
+    include(cmake/ImGui.cmake)
+endif()
 
 add_executable(caneo
     src/main.cpp
@@ -36,35 +41,17 @@ add_executable(caneo
     src/decoder/DbcPppWrapper.cpp
     src/decoder/DecoderRegistry.cpp
     src/gui/TuiDataFrameSet.cpp
-    src/gui/Gui.cpp
-    src/gui/GraphWindow.cpp
-    src/gui/ModelWindow.cpp
-    src/gui/TraceWindow.cpp
-    src/gui/TraceContainerWindow.cpp
-    src/gui/SendWindow.cpp
-    src/gui/GraphPreset.cpp
-    src/gui/AppState.cpp
-    src/gui/FileBrowser.cpp
-    src/gui/SettingsWindow.cpp
-    src/gui/GuiStyle.cpp
     src/gui/LogViewer.cpp
-    src/gui/FlowsWindow.cpp
     src/send/ModelCache.cpp
-    src/gui/FlowEditorWindow.cpp
-    src/gui/DebugView.cpp
-    src/gui/DbcEditor.cpp
-    src/gui/DbcNetwork.cpp
     src/dbc/DbcModel.cpp
     src/debug/LogDocument.cpp
     src/debug/DbcInfo.cpp
     src/debug/OfflineFlow.cpp
     src/debug/CsvExport.cpp
-    ${CANEO_FONTS_CPP}
     src/config/Config.cpp
     src/config/Pipeline.cpp
     src/config/RecentConfigs.cpp
     src/setup/CanDevices.cpp
-    src/gui/PipelineWindow.cpp
     src/config/AppConfig.cpp
     src/setup/InterfaceSetup.cpp
     src/send/SendModel.cpp
@@ -80,6 +67,7 @@ add_executable(caneo
     src/grpc/CanStreamService.cpp
     src/grpc/CanStreamServer.cpp
     src/grpc/RemoteLogControl.cpp
+    src/grpc/RemoteInterfaces.cpp
     src/proto/ProtoLog.cpp
     src/proto/ProtoLogRegistry.cpp
     src/logger/LogController.cpp
@@ -93,21 +81,55 @@ add_executable(caneo
     src/modes/run_tui.cpp
     src/modes/config_picker.cpp
     src/modes/run_live.cpp
-    src/modes/run_gui.cpp
     src/xcp/A2lReader.cpp
     src/xcp/ElfReader.cpp
     src/xcp/XcpCanTransport.cpp
     src/xcp/XcpMaster.cpp
-    src/gui/XcpView.cpp
 )
+
+if(CANEO_GUI)
+    target_sources(caneo PRIVATE
+        src/gui/Gui.cpp
+        src/gui/AppState.cpp
+        src/gui/GraphPreset.cpp
+        src/gui/GraphWindow.cpp
+        src/gui/ModelWindow.cpp
+        src/gui/TraceWindow.cpp
+        src/gui/TraceContainerWindow.cpp
+        src/gui/SendWindow.cpp
+        src/gui/FileBrowser.cpp
+        src/gui/SettingsWindow.cpp
+        src/gui/GuiStyle.cpp
+        src/gui/FlowsWindow.cpp
+        src/gui/FlowEditorWindow.cpp
+        src/gui/DebugView.cpp
+        src/gui/DbcEditor.cpp
+        src/gui/DbcNetwork.cpp
+        src/gui/PipelineWindow.cpp
+        src/gui/XcpView.cpp
+        src/modes/run_gui.cpp
+        ${CANEO_FONTS_CPP}
+    )
+    target_link_libraries(caneo PRIVATE imgui implot imnodes)
+    target_compile_definitions(caneo PRIVATE CANEO_HAS_GUI=1)
+else()
+    target_compile_definitions(caneo PRIVATE CANEO_HAS_GUI=0)
+endif()
 
 # gRPC / protobuf codegen for can_stream.proto
 set(PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/proto/can_stream.proto")
 set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/proto_gen")
 file(MAKE_DIRECTORY "${PROTO_OUT_DIR}")
 
-get_target_property(PROTOC_EXE protobuf::protoc LOCATION)
-get_target_property(GRPC_CPP_PLUGIN gRPC::grpc_cpp_plugin LOCATION)
+if(CMAKE_CROSSCOMPILING)
+    # The conan targets point at the target-arch binaries; the native tools of the
+    # build context are on PATH (conanbuild.sh), e.g. for plat/rpi5.
+    find_program(PROTOC_EXE protoc REQUIRED)
+    find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+else()
+    get_target_property(PROTOC_EXE protobuf::protoc LOCATION)
+    get_target_property(GRPC_CPP_PLUGIN gRPC::grpc_cpp_plugin LOCATION)
+endif()
 
 add_custom_command(
     OUTPUT
@@ -143,9 +165,6 @@ target_link_libraries(caneo PRIVATE
     lua::lua
     sol2::sol2
     gflags::gflags
-    imgui
-    implot
-    imnodes
     gRPC::grpc++
     ZLIB::ZLIB
     elfio::elfio

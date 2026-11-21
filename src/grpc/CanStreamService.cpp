@@ -1,13 +1,20 @@
 #include "CanStreamService.hpp"
 #include "logger/LogController.hpp"
+#include "setup/InterfaceSetup.hpp"
+#include "compat/print.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <fstream>
+#include <unistd.h>
 
 void CanStreamService::broadcast(const CanFrame& frame) {
     caneo::RawCanFrame proto;
     proto.set_interface(frame.header().interface);
     proto.set_can_id(frame.header().id);
     proto.set_dlc(frame.header().dlc);
+    proto.set_fd(frame.header().fd);
+    proto.set_brs(frame.header().brs);
     const auto& payload = frame.payload();
     proto.set_data(std::string(payload.begin(), payload.end()));
     proto.set_timestamp_us(
@@ -107,5 +114,52 @@ grpc::Status CanStreamService::GetLogStatus(grpc::ServerContext*,
                                             const caneo::LogControlRequest*,
                                             caneo::LogStatus* status) {
     fill_log_status(status, log_controller_);
+    return grpc::Status::OK;
+}
+
+void CanStreamService::set_interfaces(const std::vector<InterfaceConfig>& interfaces) {
+    std::lock_guard lock(interfaces_mutex_);
+    interfaces_.clear();
+    for (const auto& i : interfaces)
+        if (!i.is_remote()) interfaces_.push_back(i);   // only channels this caneo owns
+}
+
+grpc::Status CanStreamService::ListInterfaces(grpc::ServerContext*,
+                                              const caneo::ListInterfacesRequest*,
+                                              caneo::InterfaceList* list) {
+    char host[256] = {};
+    if (gethostname(host, sizeof host - 1) == 0) list->set_host(host);
+    std::lock_guard lock(interfaces_mutex_);
+    for (const auto& i : interfaces_) {
+        auto* info = list->add_interfaces();
+        info->set_name(i.name);
+        info->set_bitrate(i.virtual_can ? 0 : i.baudrate);
+        info->set_data_bitrate(i.fd ? i.data_baudrate : 0);
+        info->set_fd(i.fd);
+        std::ifstream f("/sys/class/net/" + i.name + "/operstate");
+        std::string state;
+        info->set_state(f >> state ? state : "missing");
+    }
+    return grpc::Status::OK;
+}
+
+grpc::Status CanStreamService::ResetInterfaces(grpc::ServerContext*,
+                                               const caneo::ResetRequest* req,
+                                               caneo::ResetResult* result) {
+    std::vector<std::string> names, errors;
+    {
+        std::lock_guard lock(interfaces_mutex_);
+        for (const auto& i : interfaces_)
+            if (req->interfaces().empty() || std::ranges::contains(req->interfaces(), i.name))
+                names.push_back(i.name);
+        for (const auto& want : req->interfaces())
+            if (std::ranges::none_of(interfaces_, [&](const auto& i) { return i.name == want; }))
+                errors.push_back(want + ": not a channel of this server");
+    }
+    std::string err = reset_interfaces(names, /*allow_privileged=*/false);
+    for (const auto& e : errors) err += (err.empty() ? "" : "; ") + e;
+    std::println("gRPC: reset {} channel(s){}", names.size(), err.empty() ? "" : " - " + err);
+    result->set_ok(err.empty());
+    result->set_error(err);
     return grpc::Status::OK;
 }

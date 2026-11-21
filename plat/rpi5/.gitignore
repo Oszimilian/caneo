@@ -1,0 +1,6 @@
+layers/
+build/
+cache/
+sdk/
+deploy/
+meta-caneo/recipes-apps/caneo/files/caneo

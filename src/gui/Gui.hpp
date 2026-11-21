@@ -65,6 +65,10 @@ public:
     void          set_channel_control(std::function<ChannelResult(bool graphical)> start, std::function<void()> stop);
     ChannelResult start_channels_now(bool graphical);   // synchronous (used for --log)
 
+    // "Reset HW" next to Stop: takes the running channels down + up (local, and remote ones via gRPC).
+    // Runs on a worker thread (may ask for the password); returns an error text, empty on success.
+    void set_reset_control(std::function<std::string(bool graphical)> reset) { channel_reset_ = std::move(reset); }
+
     // No config file was found: show the Settings with the "load config" dialog open.
     void search_config() { search_config_ = true; }
 
@@ -73,6 +77,7 @@ private:
     void render_mode_toggle(); // centre of the menu bar
     void render_status(); // right side of the menu bar
     void render_channel_button();
+    void render_reset_button();
     void render_welcome();
     void build_default_layout(unsigned int dockspace_id);
     void render_log_dialog();
@@ -107,6 +112,10 @@ private:
     std::atomic<bool>                  channels_starting_{false};
     ChannelResult                      start_result_;
     std::jthread                       starter_;
+    std::function<std::string(bool)>   channel_reset_;
+    std::atomic<bool>                  channels_resetting_{false};
+    std::string                        reset_result_;
+    std::jthread                       resetter_;
     bool                               search_config_ = false;
     std::vector<std::string>           recent_;
     FileBrowser                        welcome_browser_;

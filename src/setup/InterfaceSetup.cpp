@@ -7,7 +7,11 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <cerrno>
+#include <cstring>
 #include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -43,6 +47,7 @@ std::vector<std::string> plan_setup(const Config& cfg, std::vector<std::string>*
     bool need_vcan_module = false;
     std::vector<std::string> per_iface;
     for (const auto& iface : cfg.interfaces) {
+        if (iface.is_remote()) continue;   // gRPC channel: the server sets its bus up
         if (!safe_name(iface.name)) {
             warn(std::format("invalid interface name '{}'", iface.name));
             continue;
@@ -116,4 +121,49 @@ void setup_interfaces(const Config& cfg) {
         std::println(stderr, "Warning: {}, skipping.", w);
     if (const auto err = run_privileged(cmds, false); !err.empty())
         throw std::runtime_error(err);
+}
+
+// down + up with SIOCSIFFLAGS; errno on failure, 0 on success
+static int cycle_interface(const std::string& name) {
+    const int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return errno;
+    struct ifreq ifr {};
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+    int err = 0;
+    if (::ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
+        err = errno;
+    } else {
+        ifr.ifr_flags &= ~IFF_UP;
+        if (::ioctl(fd, SIOCSIFFLAGS, &ifr) < 0) {
+            err = errno;
+        } else {
+            ifr.ifr_flags |= IFF_UP;
+            if (::ioctl(fd, SIOCSIFFLAGS, &ifr) < 0) err = errno;
+        }
+    }
+    ::close(fd);
+    return err;
+}
+
+std::string reset_interfaces(const std::vector<std::string>& names, bool allow_privileged, bool graphical) {
+    std::vector<std::string> errors, privileged;
+    for (const auto& name : names) {
+        if (!safe_name(name) || !interface_exists(name)) {
+            errors.push_back(std::format("{}: not found", name));
+            continue;
+        }
+        const int err = cycle_interface(name);
+        if (err == 0) continue;
+        if ((err == EPERM || err == EACCES) && allow_privileged)
+            privileged.push_back(std::format("ip link set {0} down && ip link set {0} up", name));
+        else
+            errors.push_back(std::format("{}: {}", name, err == EPERM || err == EACCES
+                                                             ? "no permission (needs root or CAP_NET_ADMIN)"
+                                                             : std::strerror(err)));
+    }
+    if (!privileged.empty())
+        if (auto err = run_privileged(privileged, graphical); !err.empty()) errors.push_back(err);
+    std::string out;
+    for (const auto& e : errors) out += (out.empty() ? "" : "; ") + e;
+    return out;
 }

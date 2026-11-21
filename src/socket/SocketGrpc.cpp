@@ -8,10 +8,12 @@
 
 SocketGrpc::SocketGrpc(boost::asio::io_context& io,
                        std::string interface,
-                       std::string server_address)
+                       std::string server_address,
+                       std::string remote)
     : io_(io)
     , interface_(std::move(interface))
-    , server_address_(std::move(server_address)) {}
+    , server_address_(std::move(server_address))
+    , remote_(remote.empty() ? interface_ : std::move(remote)) {}
 
 SocketGrpc::~SocketGrpc() {
     stop();
@@ -36,7 +38,7 @@ void SocketGrpc::start() {
             }
 
             caneo::SubscribeRequest req;
-            req.set_interface(interface_);
+            req.set_interface(remote_);
             auto reader = stub->Subscribe(ctx.get(), req);
 
             connected_ = true;
@@ -46,6 +48,8 @@ void SocketGrpc::start() {
                     .id        = proto_frame.can_id(),
                     .interface = interface_,
                     .dlc       = static_cast<uint8_t>(proto_frame.dlc()),
+                    .fd        = proto_frame.fd(),
+                    .brs       = proto_frame.brs(),
                 };
                 const auto& data = proto_frame.data();
                 std::vector<uint8_t> payload(data.begin(), data.end());
@@ -80,7 +84,7 @@ void SocketGrpc::stop() {
 void SocketGrpc::send(uint64_t id, const std::vector<uint8_t>& data) {
     if (!send_stub_) return;
     caneo::RawCanFrame frame;
-    frame.set_interface(interface_);
+    frame.set_interface(remote_);
     frame.set_can_id(static_cast<uint32_t>(id));
     frame.set_dlc(static_cast<uint32_t>(data.size()));
     frame.set_data(std::string(data.begin(), data.end()));
@@ -92,5 +96,5 @@ void SocketGrpc::send(uint64_t id, const std::vector<uint8_t>& data) {
 }
 
 std::ostream& operator<<(std::ostream& os, const SocketGrpc& s) {
-    return os << "SocketGrpc [" << s.interface_ << "] -> " << s.server_address_;
+    return os << "SocketGrpc [" << s.interface_ << "] -> " << s.server_address_ << " [" << s.remote_ << "]";
 }

@@ -14,7 +14,8 @@
 
 class SocketGrpc : public Socket {
 public:
-    SocketGrpc(boost::asio::io_context& io, std::string interface, std::string server_address);
+    // interface = local channel name (frames carry it); remote = channel name on the server (empty = same name)
+    SocketGrpc(boost::asio::io_context& io, std::string interface, std::string server_address, std::string remote = {});
     ~SocketGrpc() override;
 
     void start() override;
@@ -32,6 +33,7 @@ private:
     boost::asio::io_context& io_;
     std::string              interface_;
     std::string              server_address_;
+    std::string              remote_;
     std::atomic<bool>        running_{false};
     std::atomic<bool>        connected_{false};
     std::thread              reader_thread_;

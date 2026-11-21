@@ -67,6 +67,7 @@ void run_tui(const AppConfig& app) {
     if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
         grpc_server->set_send_fn(send_fn);
+        grpc_server->set_interfaces(app.config.interfaces);
     }
 
     SignalStore signal_store;
@@ -92,12 +93,13 @@ void run_tui(const AppConfig& app) {
         if (!cfg.dbc.empty())
             decoders.add_interface(cfg.name, cfg.dbc);
         std::unique_ptr<Socket> sock;
-        if (app.grpc_client.empty()) {
+        if (app.grpc_client.empty() && !cfg.is_remote()) {
             auto* can = new SocketCAN(io, cfg.name);
             socket_map[cfg.name] = can;
             sock.reset(can);
         } else {
-            auto* gs = new SocketGrpc(io, cfg.name, app.grpc_client);
+            auto* gs = cfg.is_remote() ? new SocketGrpc(io, cfg.name, cfg.grpc, cfg.remote_name())
+                                          : new SocketGrpc(io, cfg.name, app.grpc_client);
             grpc_socket_map[cfg.name] = gs;
             sock.reset(gs);
         }

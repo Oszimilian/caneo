@@ -1,0 +1,23 @@
+[Unit]
+Description=caneo CAN gateway (headless, gRPC server on port 50051)
+Wants=network-online.target
+After=systemd-networkd.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=can
+Group=can
+Environment=HOME=/home/can
+WorkingDirectory=/home/can
+ExecStartPre=/usr/bin/caneo-wait-can
+ExecStart=/usr/bin/caneo --headless --grpc_server --grpc_port=50051 --config /etc/caneo/caneo.yaml
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

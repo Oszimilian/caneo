@@ -161,3 +161,17 @@ sudo cp build/caneo /usr/local/bin/caneo
 sudo restorecon -v /usr/local/bin/caneo   # SELinux
 sudo systemctl restart caneo
 ```
+
+## Headless build (no GUI)
+
+For targets without a display, the GUI (Dear ImGui, GLFW, OpenGL) can be left out:
+
+```bash
+conan install . --output-folder=build-nogui --build=missing -o "&:gui=False"
+cmake -B build-nogui -DCMAKE_TOOLCHAIN_FILE=build-nogui/conan_toolchain.cmake \
+      -DCMAKE_BUILD_TYPE=Release -DCANEO_GUI=OFF
+```
+
+Without a mode flag such a binary runs `--headless`; `--tui` and the gRPC
+server/client work as usual. The Raspberry Pi 5 image (`plat/rpi5`, Yocto)
+cross-builds caneo this way with the Yocto SDK, see `plat/rpi5/README.md`.

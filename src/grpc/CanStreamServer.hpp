@@ -18,6 +18,7 @@ public:
     void broadcast(const CanFrame& frame) { service_.broadcast(frame); }
     void set_send_fn(SendFn fn) { service_.set_send_fn(std::move(fn)); }
     void set_log_controller(LogController* lc) { service_.set_log_controller(lc); }
+    void set_interfaces(const std::vector<InterfaceConfig>& i) { service_.set_interfaces(i); }
 
 private:
     CanStreamService              service_;

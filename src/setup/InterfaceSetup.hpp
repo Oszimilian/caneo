@@ -17,3 +17,9 @@ std::string run_privileged(const std::vector<std::string>& commands, bool graphi
 
 // plan_setup() + run_privileged() for the CLI modes. Throws std::runtime_error if it fails.
 void setup_interfaces(const Config& cfg);
+
+// "Reset HW": takes each interface down and up again - restarts the CAN controller (bus-off, error counters),
+// the bitrate stays. Open sockets stay bound and keep receiving afterwards.
+// Direct ioctl when caneo may (root / CAP_NET_ADMIN, e.g. the Pi service); otherwise, if `allow_privileged`,
+// one run_privileged() call for the rest. Unknown / missing interfaces are reported. Returns an error text, empty on success.
+std::string reset_interfaces(const std::vector<std::string>& names, bool allow_privileged, bool graphical = true);

@@ -18,6 +18,15 @@ A CAN bus visualization and send tool written in C++23.
 ./docker-build.sh                 # build/caneo (conan cache in docker volume caneo-conan-amd64)
 ./docker-build.sh --arch arm64    # build-arm64/caneo via QEMU
 ```
+- Headless build without GLFW/OpenGL/ImGui: conan `-o "&:gui=False"` + CMake `-DCANEO_GUI=OFF` (`CANEO_HAS_GUI=0`,
+  no `run_gui`, default mode = headless instead of GUI). GUI-only sources are listed in the `if(CANEO_GUI)` block of CMakeLists.txt
+
+## Raspberry Pi 5 image (`plat/rpi5/`, see its README.md)
+- Yocto scarthgap (GCC 13 / glibc 2.39) in Docker (`caneo-yocto`), layers pinned in `layers.txt`, own layer `meta-caneo`
+- `build.sh sdk` (meta-toolchain) -> `build.sh caneo` (conan profile `rpi5` from the SDK env, headless cross build) ->
+  `build.sh image` (`caneo-image`, binary from `meta-caneo/recipes-apps/caneo/files/caneo`)
+- PCAN-M.2 = `peak_pciefd` (kernel fragment `can-peak.cfg`, `dtparam=pciex1` + `dtoverlay=pcie-32bit-dma-pi5`, else DMA alloc fails with -12); can0/1/3 CAN 1M, can2 FD 1M/5M via
+  systemd-networkd; eth 192.168.10.75/24; user can/can; `caneo.service` = `--headless --grpc_server` (port 50051)
 
 # C++ conventions
 - C++23, use modern features
@@ -42,13 +51,25 @@ A CAN bus visualization and send tool written in C++23.
   decoders, TUI) is **derived** from it (`derive_interfaces()`, called after loading via `sync_pipeline()` and after edits).
   Old files with only `interfaces:` get a graph generated (`pipeline_from_interfaces()`); `interfaces:` is still written for compatibility
 - Blocks: `hw_socketcan` (USB/PCI adapter from `detect_can_devices()` in `src/setup/CanDevices.*`, one output port per channel),
-  `virtual_socketcan` (vcan names), `baudrate` (bit/s or `virtual`, `fd` + `data_baudrate` = CAN FD), `decode` (DBC), `live` (trace/graphs),
+  `virtual_socketcan` (vcan names), `grpc_socketcan` (remote channels of a caneo `--grpc_server`, see "Remote channels" below), `baudrate` (bit/s or `virtual`, `fd` + `data_baudrate` = CAN FD), `decode` (DBC), `live` (trace/graphs),
   `log` (format mcap|blf), `xcp` (XCP master: name, `tx_id`/`rx_id`, `addr_ext`, `timeout_ms`, `pad`; input only)
 - `xcp` blocks are derived into `Config::xcp_targets` (`XcpTargetConfig`, fd from the channel); XCP parameter changes need no restart
 - Per interface derived: `baudrate`, `virtual_can`, `dbc`, `live` (reaches a Live block), `log` (reaches a Log block); channels that
   are connected to nothing are dropped. `logging.format` follows the fed Log blocks (mcap / blf / both). `run_gui` only forwards frames
   to the GUI / log when the flag is set; `setup_interfaces()` creates vcan per interface (`virtual_can`)
 - GUI: Settings tab "Channels" (`PipelineWindow::render_contents`, imnodes, own context + editor); channel changes need a restart (banner with Save & Restart)
+
+## Remote channels (gRPC SocketCAN)
+- Config `grpc: {enabled}` (`GrpcConfig`, Settings > General > "Remote (gRPC)"); only then the block `grpc_socketcan` is offered
+  and derived. Block: `address` (host:port), `prefix`, `channels` = selected server channel names; no baudrate block (server owns the bus)
+- Derived `InterfaceConfig::grpc` (address) + `remote` (server name), local `name` = prefix + remote; written to `interfaces:` too.
+  `plan_setup()` skips them; GUI/TUI/headless open them as `SocketGrpc(io, name, grpc, remote_name())` (also next to local channels)
+- `ListInterfaces` RPC (`CanStreamService::set_interfaces()` = local channels + operstate, host name); client
+  `list_remote_interfaces()` (`src/grpc/RemoteInterfaces.*`), PipelineWindow queries it async per block (Query button / address edit)
+- "Reset HW" (menu bar next to Stop, `Gui::render_reset_button`, `set_reset_control`): `reset_interfaces()` (InterfaceSetup) takes
+  channels down + up via SIOCSIFFLAGS (controller restart, bitrate stays, open sockets keep working); without CAP_NET_ADMIN one
+  `run_privileged()`. Remote channels: `ResetInterfaces` RPC (`reset_remote_interfaces()`), server resets only its own channels, never prompts
+- `RawCanFrame` carries `fd` / `brs`. The old global `--grpc_client=host:port` (all channels remote) still works
 
 ## Start-up modes (`src/main.cpp`, `AppConfig`)
 - No flag = GUI; `--tui` = terminal UI; `--headless` = the former no-UI default (print/log). Without a config file (no `caneo.yaml`, no

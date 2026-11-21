@@ -1,0 +1,7 @@
+# PCAN-M.2 channel 4: classic CAN, 1 Mbit/s
+[Match]
+Name=can3
+
+[CAN]
+BitRate=1000000
+RestartSec=100ms

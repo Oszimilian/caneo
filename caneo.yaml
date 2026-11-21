@@ -2,8 +2,10 @@
 virtual: false
 log_file_path: ~/Dokumente/Logs
 gui:
-  scale: 1.5
-  theme: light
+  scale: 1
+  theme: dark
+grpc:
+  enabled: true
 logging:
   format: mcap
   raw: true
@@ -30,16 +32,36 @@ interfaces:
     dbc: ""
     baudrate: 1000000
     log: false
+  pican0:
+    dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    log: false
+    grpc: 192.168.10.75:50051
+    remote: can0
+  pican1:
+    dbc: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
+    log: false
+    grpc: 192.168.10.75:50051
+    remote: can1
+  pican2:
+    dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    log: false
+    grpc: 192.168.10.75:50051
+    remote: can2
+  pican3:
+    dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    log: false
+    grpc: 192.168.10.75:50051
+    remote: can3
 pipeline:
   nodes:
     - id: 1
       type: live
-      x: 960.000061
-      y: 0
+      x: 1312.54102
+      y: 8.85780811
     - id: 2
       type: log
-      x: 960.000061
-      y: 150
+      x: 1326.71338
+      y: 183.659668
       format: mcap
     - id: 3
       type: virtual_socketcan
@@ -48,24 +70,24 @@ pipeline:
       channels: [can2]
     - id: 4
       type: baudrate
-      x: 319.999939
+      x: 320.000061
       y: 0
       baudrate: 1000000
       virtual: true
     - id: 5
       type: decode
-      x: 639.999878
+      x: 640.000122
       y: 0
       dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
     - id: 6
       type: virtual_socketcan
-      x: 3.00000024
-      y: 333
+      x: 3.00000072
+      y: 332.999969
       channels: [can6]
     - id: 7
       type: baudrate
-      x: 381.999939
-      y: 352
+      x: 382
+      y: 352.000061
       baudrate: 1000000
       virtual: false
       fd: true
@@ -73,8 +95,8 @@ pipeline:
     - id: 8
       type: xcp
       name: ECU
-      x: 874.999939
-      y: 397
+      x: 874.999573
+      y: 396.999908
       tx_id: 0x7e0
       rx_id: 0x7e1
       addr_ext: 0
@@ -82,35 +104,102 @@ pipeline:
       pad: false
     - id: 9
       type: hw_socketcan
-      x: -186
+      x: -186.000031
       y: 765
       device: usb:0c72:0011:@3-3.2.1.3
       channels: [can0, can1]
     - id: 10
       type: baudrate
-      x: 367.000061
+      x: 367.000214
       y: 765
       baudrate: 1000000
       virtual: false
     - id: 11
       type: decode
-      x: 722
-      y: 801.999878
+      x: 722.000122
+      y: 801.999634
       dbc: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
     - id: 12
       type: live
       x: 1153
-      y: 898.999939
+      y: 898.999817
     - id: 13
       type: baudrate
-      x: 372
-      y: 1008.99994
+      x: 372.000061
+      y: 1008.99976
       baudrate: 1000000
       virtual: false
     - id: 14
       type: live
-      x: 843.000061
+      x: 842.999573
       y: 1061
+    - id: 15
+      type: grpc_socketcan
+      x: -154.608948
+      y: 1347.9967
+      address: 192.168.10.75:50051
+      prefix: pi
+      channels: [can0, can1, can2, can3]
+    - id: 16
+      type: baudrate
+      x: 444.68161
+      y: 1377.14331
+      baudrate: 1000000
+      virtual: false
+    - id: 17
+      type: baudrate
+      x: 469.755981
+      y: 1611.97546
+      baudrate: 1000000
+      virtual: false
+    - id: 18
+      type: baudrate
+      x: 467.595032
+      y: 1858.85925
+      baudrate: 1000000
+      virtual: false
+    - id: 19
+      type: decode
+      x: 898.181396
+      y: 1397.76208
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    - id: 21
+      type: decode
+      x: 903.496643
+      y: 1619.20654
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can4.dbc
+    - id: 22
+      type: live
+      x: 1432.52527
+      y: 1949.08435
+    - id: 23
+      type: live
+      x: 1457.99573
+      y: 1697.15613
+    - id: 24
+      type: live
+      x: 1481.02576
+      y: 1475.71106
+    - id: 25
+      type: baudrate
+      x: 468.822052
+      y: 2118.95703
+      baudrate: 1000000
+      virtual: false
+    - id: 26
+      type: decode
+      x: 915.897827
+      y: 1877.85522
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    - id: 27
+      type: decode
+      x: 908.811096
+      y: 2125.87402
+      dbc: /home/maximilian/Git/fse_datenbasen_2713/can3.dbc
+    - id: 29
+      type: live
+      x: 1488.93726
+      y: 2213.62915
   links:
     - [3, 0, 4, 0]
     - [4, 0, 5, 0]
@@ -123,6 +212,18 @@ pipeline:
     - [11, 0, 12, 0]
     - [9, 1, 13, 0]
     - [13, 0, 14, 0]
+    - [15, 0, 16, 0]
+    - [15, 1, 17, 0]
+    - [15, 2, 18, 0]
+    - [16, 0, 19, 0]
+    - [17, 0, 21, 0]
+    - [19, 0, 24, 0]
+    - [21, 0, 23, 0]
+    - [18, 0, 26, 0]
+    - [25, 0, 27, 0]
+    - [26, 0, 22, 0]
+    - [27, 0, 29, 0]
+    - [15, 3, 25, 0]
 graphs:
   - name: Federweg
     window_s: 30

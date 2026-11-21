@@ -19,6 +19,7 @@
 #include "model/SignalStore.hpp"
 #include "proto/ProtoLogRegistry.hpp"
 #include "grpc/CanStreamServer.hpp"
+#include "grpc/RemoteInterfaces.hpp"
 #include "setup/InterfaceSetup.hpp"
 #include "socket/Socket.hpp"
 #include "socket/SocketCAN.hpp"
@@ -121,6 +122,7 @@ bool run_gui(AppConfig& app)
     if (app.grpc_server) {
         grpc_server = std::make_unique<CanStreamServer>(app.grpc_port);
         grpc_server->set_send_fn(send_fn);
+        grpc_server->set_interfaces(app.config.interfaces);
     }
 
     std::unique_ptr<ModelEngine> model_engine;
@@ -149,7 +151,7 @@ bool run_gui(AppConfig& app)
         std::vector<std::string> errors;
         for (const auto& cfg : app.config.interfaces) {
             std::unique_ptr<Socket> sock;
-            if (app.grpc_client.empty()) {
+            if (app.grpc_client.empty() && !cfg.is_remote()) {
                 // A missing interface must not kill the GUI.
                 SocketCAN* can = nullptr;
                 try {
@@ -162,7 +164,8 @@ bool run_gui(AppConfig& app)
                 socket_map[cfg.name] = can;
                 sock.reset(can);
             } else {
-                auto* gs = new SocketGrpc(io, cfg.name, app.grpc_client);
+                auto* gs = cfg.is_remote() ? new SocketGrpc(io, cfg.name, cfg.grpc, cfg.remote_name())
+                                          : new SocketGrpc(io, cfg.name, app.grpc_client);
                 {
                     std::lock_guard lock(grpc_map_mutex);
                     grpc_socket_map[cfg.name] = gs;
@@ -227,16 +230,37 @@ bool run_gui(AppConfig& app)
     };
     gui->set_channel_control(start_channels, [&] { on_io(close_sockets); });
 
+    // "Reset HW": local channels down + up (password only if caneo lacks CAP_NET_ADMIN), remote ones on their server
+    gui->set_reset_control([&app](bool graphical) -> std::string {
+        std::vector<std::string>                        local;
+        std::map<std::string, std::vector<std::string>> remote;   // server address -> channel names there
+        for (const auto& cfg : app.config.interfaces) {
+            if (cfg.is_remote())                remote[cfg.grpc].push_back(cfg.remote_name());
+            else if (!app.grpc_client.empty())  remote[app.grpc_client].push_back(cfg.name);
+            else                                local.push_back(cfg.name);
+        }
+        std::string err;
+        const auto add = [&err](const std::string& e) { if (!e.empty()) err += (err.empty() ? "" : "\n  ") + e; };
+        if (!local.empty()) add(reset_interfaces(local, /*allow_privileged=*/true, graphical));
+        for (const auto& [address, names] : remote)
+            if (auto r = reset_remote_interfaces(address, names); !r) add(address + ": " + r.error());
+        return err;
+    });
+
     if (!socket_errors.empty()) {
         std::string msg = "Problems with the configured channels:";
         for (const auto& e : socket_errors) msg += "\n  " + e;
         app_state.set_status(msg, true);
     }
 
-    // Show gRPC connection indicator when running as client.
-    if (!app.grpc_client.empty()) {
+    // Show gRPC connection indicator when running as client or with remote channels (gRPC SocketCAN blocks).
+    std::string grpc_label = app.grpc_client;
+    for (const auto& cfg : app.config.interfaces)
+        if (cfg.is_remote() && grpc_label.find(cfg.grpc) == std::string::npos)
+            grpc_label += (grpc_label.empty() ? "" : ", ") + cfg.grpc;
+    if (!grpc_label.empty()) {
         // read from the render thread while the asio thread may change the map: ask the asio thread
-        gui->set_status_indicator(app.grpc_client, [&]() {
+        gui->set_status_indicator(grpc_label, [&]() {
             bool connected = false;
             std::lock_guard lock(grpc_map_mutex);
             for (auto& [name, gs] : grpc_socket_map) connected = connected || gs->connected();

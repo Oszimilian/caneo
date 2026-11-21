@@ -1,0 +1,14 @@
+#!/bin/sh
+# Waits (max. 30 s) until the PCAN-M.2 channels exist and systemd-networkd
+# brought them up, so caneo finds them configured and runs no "ip link".
+for i in $(seq 30); do
+    ok=1
+    for c in can0 can1 can2 can3; do
+        state="$(cat /sys/class/net/$c/operstate 2>/dev/null)"
+        [ "$state" = up ] || [ "$state" = unknown ] || ok=0
+    done
+    [ $ok = 1 ] && exit 0
+    sleep 1
+done
+echo "caneo-wait-can: not all CAN channels are up (PCAN-M.2 detected? lspci / ip link)" >&2
+exit 0

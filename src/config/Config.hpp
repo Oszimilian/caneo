@@ -196,12 +196,19 @@ struct InterfaceConfig {
     bool                    virtual_can = false;   // create as vcan device (in addition to Config::virtual_can)
     bool                    live = true;           // frames go to the live view (trace windows)
     bool                    log  = true;           // frames are logged
+    std::string             grpc;                  // non-empty: remote channel of a caneo gRPC server ("host:port")
+    std::string             remote;                // grpc: channel name on the server (empty = name)
     std::vector<ActionSpec> actions;
+
+    bool        is_remote() const { return !grpc.empty(); }
+    const std::string& remote_name() const { return remote.empty() ? name : remote; }
 };
 
 // One block of the input pipeline (GUI "Inputs" window): where CAN data comes from and where it goes.
 //   hw_socketcan       device (USB id, may be empty), channels (interface names) -> one output port per channel
 //   virtual_socketcan  channels (vcan interface names)                           -> one output port per channel
+//   grpc_socketcan     address (caneo gRPC server), prefix, channels (server names) -> one output port per channel;
+//                      only used with grpc.enabled, needs no baudrate block
 //   baudrate           baudrate or virtual_can, fd + data_baudrate (CAN FD)      1 in -> 1 out
 //   xcp                xcp_* (CAN ids, address extension, timeout), name        1 in (XCP master on that channel)
 //   decode             dbc                                                       1 in -> 1 out
@@ -214,7 +221,9 @@ struct PipelineNodeSpec {
     float       x = 0.0f, y = 0.0f;
 
     std::string              device;     // hw_socketcan: "usb:<vid>:<pid>:<serial>" / "dev:<name>"; empty = by interface name
-    std::vector<std::string> channels;
+    std::vector<std::string> channels;   // grpc_socketcan: selected channel names of the server
+    std::string              address = "192.168.10.75:50051";   // grpc_socketcan: caneo gRPC server
+    std::string              prefix;     // grpc_socketcan: local name = prefix + server channel name
     uint32_t                 baudrate    = 500'000;
     bool                     virtual_can = false;   // baudrate: no real bus, create a vcan device
     bool                     fd = false;            // baudrate: CAN FD
@@ -279,12 +288,21 @@ struct XcpConfig {
     bool operator==(const XcpConfig&) const = default;
 };
 
+// Config `grpc:` - remote channels of a caneo gRPC server (caneo --grpc_server, e.g. the Raspberry Pi image).
+// enabled = the "gRPC SocketCAN" block is offered in Settings > Channels and its channels are opened.
+struct GrpcConfig {
+    bool enabled = false;
+
+    bool operator==(const GrpcConfig&) const = default;
+};
+
 struct Config {
     bool                         virtual_can = false;
     std::string                  log_file_path;     // as written, may start with ~/
     std::string                  log_viewer;        // command to open a log, {file} = path
     LogOptions                   logging;
     GuiConfig                    gui;
+    GrpcConfig                   grpc;
     std::vector<InterfaceConfig> interfaces;     // derived from `pipeline` when that exists (see Pipeline.hpp)
     PipelineSpec                 pipeline;       // config `pipeline:` - the graphical channel setup of the GUI
     std::vector<GraphConfig>     graphs;

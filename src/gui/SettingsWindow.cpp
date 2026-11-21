@@ -1,5 +1,7 @@
 #include "SettingsWindow.hpp"
 
+#include "config/Pipeline.hpp"
+
 #include <algorithm>
 #include <cstdlib>
 #include <array>
@@ -306,6 +308,24 @@ void SettingsWindow::render_logging()
         ImGui::TextColored(ImVec4(0.85f, 0.2f, 0.1f, 1.0f), "%s", viewer_error_.c_str());
 }
 
+// gRPC: remote channels of another caneo (e.g. the Raspberry Pi gateway, `caneo --grpc_server`).
+void SettingsWindow::render_remote()
+{
+    auto& cfg = state_.config();
+    if (ImGui::Checkbox("Remote channels (gRPC)", &cfg.grpc.enabled))
+        derive_interfaces(cfg);   // gRPC SocketCAN blocks only create channels while this is on
+    ImGui::TextDisabled("Adds the block \"gRPC SocketCAN\" to Settings > Channels: it asks a caneo gRPC server\n"
+                        "(started there with --grpc_server, port 50051) for its channels and receives / sends on them.");
+    const auto remote = std::ranges::count_if(cfg.interfaces, &InterfaceConfig::is_remote);
+    const bool blocks = std::ranges::any_of(cfg.pipeline.nodes, [](const auto& n) { return n.type == "grpc_socketcan"; });
+    if (cfg.grpc.enabled)
+        ImGui::Text("%td remote channel(s) in use", remote);
+    else if (blocks)
+        ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.0f, 1.0f), "gRPC SocketCAN blocks exist but are inactive");
+    if (state_.channels_changed())
+        ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.0f, 1.0f), "Channel changes need a restart (Settings > Channels: Save & Restart)");
+}
+
 void SettingsWindow::render_body()
 {
     if (ImGui::CollapsingHeader("Appearance", ImGuiTreeNodeFlags_DefaultOpen))
@@ -316,6 +336,9 @@ void SettingsWindow::render_body()
     ImGui::Spacing();
     if (ImGui::CollapsingHeader("Logging", ImGuiTreeNodeFlags_DefaultOpen))
         render_logging();
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Remote (gRPC)", ImGuiTreeNodeFlags_DefaultOpen))
+        render_remote();
 }
 
 void SettingsWindow::render()

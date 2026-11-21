@@ -8,6 +8,8 @@ message RawCanFrame {
   uint32 dlc          = 3;
   bytes  data         = 4;
   int64  timestamp_us = 5;
+  bool   fd           = 6;  // CAN FD frame
+  bool   brs          = 7;  // CAN FD bit rate switch
 }
 
 message SubscribeRequest {
@@ -20,6 +22,32 @@ message SendResult {
 
 message LogControlRequest {}
 
+message ListInterfacesRequest {}
+
+// One CAN channel of the server (as opened by caneo there).
+message InterfaceInfo {
+  string name          = 1;
+  uint32 bitrate       = 2;  // 0 = unknown / virtual
+  uint32 data_bitrate  = 3;  // CAN FD data phase, 0 = not set
+  bool   fd            = 4;
+  string state         = 5;  // operstate of the interface ("up", "down", "missing")
+}
+
+// Reset HW: channels down + up (CAN controller restart, clears bus-off / error counters).
+message ResetRequest {
+  repeated string interfaces = 1;  // empty = all channels of the server
+}
+
+message ResetResult {
+  bool   ok    = 1;
+  string error = 2;
+}
+
+message InterfaceList {
+  repeated InterfaceInfo interfaces = 1;
+  string                 host       = 2;  // host name of the server
+}
+
 message LogStatus {
   bool   active = 1;
   string path   = 2;
@@ -31,4 +59,6 @@ service CanStream {
   rpc StartLog(LogControlRequest)  returns (LogStatus);
   rpc StopLog(LogControlRequest)   returns (LogStatus);
   rpc GetLogStatus(LogControlRequest) returns (LogStatus);
+  rpc ListInterfaces(ListInterfacesRequest) returns (InterfaceList);
+  rpc ResetInterfaces(ResetRequest) returns (ResetResult);
 }
